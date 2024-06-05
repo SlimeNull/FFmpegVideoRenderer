@@ -3,11 +3,8 @@ using SkiaSharp;
 
 namespace FFmpegVideoRenderer
 {
-    public record struct VideoFrame(byte[] Data, int RowPitch, int BytesPerPixel, SKColorType ColorType)
+    public record struct VideoFrame(int Width, int Height, byte[] Data, int RowPitch, int BytesPerPixel, SKColorType ColorType)
     {
-        public int Width => RowPitch / BytesPerPixel;
-        public int Height => Data.Length / RowPitch;
-
         public unsafe void FillBitmap(SKBitmap bitmap)
         {
             if (bitmap.Width != Width ||
@@ -19,15 +16,18 @@ namespace FFmpegVideoRenderer
             }
 
             var height = Height;
-            var rowPitch = RowPitch;
+            var rowBytes = BytesPerPixel * Width;
+            var frameRowPitch = RowPitch;
+            var bitmapRowPitch = bitmap.RowBytes;
 
             var pBitmapData = (byte*)bitmap.GetPixels();
             fixed (byte* pFrameData = Data)
             {
                 for (int i = 0; i < height; i++)
                 {
-                    var offset = rowPitch * i;
-                    NativeMemory.Copy(pFrameData + offset, pBitmapData + offset, (nuint)rowPitch);
+                    var frameDataOffset = frameRowPitch * i;
+                    var bitmapDataOffset = bitmapRowPitch * i;
+                    NativeMemory.Copy(pFrameData + frameDataOffset, pBitmapData + bitmapDataOffset, (nuint)rowBytes);
                 }
             }
         }

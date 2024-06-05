@@ -1,5 +1,7 @@
-﻿using System.Runtime.InteropServices;
+﻿using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Xml.Linq;
+using Microsoft.CSharp.RuntimeBinder;
 using Sdcb.FFmpeg.Codecs;
 using Sdcb.FFmpeg.Formats;
 using Sdcb.FFmpeg.Raw;
@@ -13,15 +15,23 @@ namespace FFmpegVideoRenderer
         private readonly Stream _stream;
         private readonly IOContext _inputContext;
         private readonly FormatContext _inputFormatContext;
-        private readonly MediaStream _inputAudioStream;
-        private readonly MediaStream _inputVideoStream;
+        private readonly MediaStream? _inputAudioStream;
+        private readonly MediaStream? _inputVideoStream;
         private readonly CodecContext? _inputAudioDecoder;
         private readonly CodecContext? _inputVideoDecoder;
-        private readonly List<VideoFrame> _decodedVideoFrames = new();
-        private readonly List<AudioSample> _decodedAudioSamples = new();
+
         private bool _disposedValue;
 
-        public long VideoFrameCount => _inputVideoStream.NbFrames;
+        private long _currentFrameTimeMilliseconds = 0;
+
+        private VideoFrame? _currentVideoFrame;
+        
+        public int AudioFrameCacheSize { get; set; } = 2000;
+        public int VideoFrameCacheSize { get; set; } = 50;
+
+        public long MillisecondsToSeek { get; set; } = 1000;
+
+        public long VideoFrameCount => _inputVideoStream?.NbFrames ?? throw new InvalidOperationException("No audio stream");
         public int VideoFrameWidth => _inputVideoDecoder?.Width ?? throw new InvalidOperationException("No video stream");
         public int VideoFrameHeight => _inputVideoDecoder?.Height ?? throw new InvalidOperationException("No video stream");
 
@@ -35,38 +45,36 @@ namespace FFmpegVideoRenderer
 
             // initialize
             _inputFormatContext.LoadStreamInfo();
-            _inputAudioStream = _inputFormatContext.GetAudioStream();
-            _inputVideoStream = _inputFormatContext.GetVideoStream();
+            _inputAudioStream = _inputFormatContext.FindBestStreamOrNull(AVMediaType.Audio);
+            _inputVideoStream = _inputFormatContext.FindBestStreamOrNull(AVMediaType.Video);
 
-            if (_inputAudioStream.Index != -1)
+            if (_inputAudioStream != null)
             {
-                _inputAudioDecoder = new CodecContext(Codec.FindDecoderById(_inputAudioStream.Codecpar!.CodecId));
-                _inputAudioDecoder.FillParameters(_inputAudioStream.Codecpar);
+                _inputAudioDecoder = new CodecContext(Codec.FindDecoderById(_inputAudioStream.Value.Codecpar!.CodecId));
+                _inputAudioDecoder.FillParameters(_inputAudioStream.Value.Codecpar);
                 _inputAudioDecoder.Open();
 
                 _inputAudioDecoder.ChLayout = _inputAudioDecoder.ChLayout;
             }
 
-            if (_inputVideoStream.Index != -1)
+            if (_inputVideoStream != null)
             {
-                _inputVideoDecoder = new CodecContext(Codec.FindDecoderById(_inputVideoStream.Codecpar!.CodecId));
-                _inputVideoDecoder.FillParameters(_inputVideoStream.Codecpar);
+                _inputVideoDecoder = new CodecContext(Codec.FindDecoderById(_inputVideoStream.Value.Codecpar!.CodecId));
+                _inputVideoDecoder.FillParameters(_inputVideoStream.Value.Codecpar);
                 _inputVideoDecoder.Open();
+
+                using var packet = new Packet();
+                using var frame = new Frame();
+
+                // initialize video decoder properties
+                _inputFormatContext.ReadFrame(packet);
+                _inputVideoDecoder.SendPacket(packet);
+                _inputVideoDecoder.ReceiveFrame(frame);
             }
         }
 
 
-        int GetVideoFrameIndex(long timeMilliseconds, AVRational frameRate)
-        {
-            return (int)(timeMilliseconds * frameRate.Den / frameRate.Num / 1000);
-        }
-
-        int GetAudioSampleIndex(long timeMilliseconds, AVRational frameRate)
-        {
-            throw new NotImplementedException();
-        }
-
-        unsafe byte[] GetDataFromFrame(Frame videoFrame)
+        unsafe byte[] GetDataByteArrayFromFrame(Frame videoFrame)
         {
             var framePtr = videoFrame.Data[0];
             var rowPitch = videoFrame.Linesize[0];
@@ -91,9 +99,9 @@ namespace FFmpegVideoRenderer
             switch ((AVPixelFormat)originVideoFrame.Format)
             {
                 case AVPixelFormat.Rgba:
-                    return new VideoFrame(GetDataFromFrame(originVideoFrame), originVideoFrame.Linesize[0], 4, SkiaSharp.SKColorType.Rgba8888);
+                    return new VideoFrame(originVideoFrame.Width, originVideoFrame.Height, GetDataByteArrayFromFrame(originVideoFrame), originVideoFrame.Linesize[0], 4, SkiaSharp.SKColorType.Rgba8888);
                 case AVPixelFormat.Bgra:
-                    return new VideoFrame(GetDataFromFrame(originVideoFrame), originVideoFrame.Linesize[0], 4, SkiaSharp.SKColorType.Bgra8888);
+                    return new VideoFrame(originVideoFrame.Width, originVideoFrame.Height, GetDataByteArrayFromFrame(originVideoFrame), originVideoFrame.Linesize[0], 4, SkiaSharp.SKColorType.Bgra8888);
             }
 
             using VideoFrameConverter converter = new VideoFrameConverter();
@@ -108,7 +116,7 @@ namespace FFmpegVideoRenderer
             convertedFrame.MakeWritable();
             converter.ConvertFrame(originVideoFrame, convertedFrame);
 
-            return new VideoFrame(GetDataFromFrame(convertedFrame), convertedFrame.Linesize[0], 4, SkiaSharp.SKColorType.Bgra8888);
+            return new VideoFrame(convertedFrame.Width, convertedFrame.Height, GetDataByteArrayFromFrame(convertedFrame), convertedFrame.Linesize[0], 4, SkiaSharp.SKColorType.Bgra8888);
         }
 
         unsafe IEnumerable<AudioSample> CreateAudioSamples(Frame originAudioFrame)
@@ -120,39 +128,103 @@ namespace FFmpegVideoRenderer
             //}
         }
 
-        void EnsureDecoded(
+        long GetTimestampFromMilliseconds(long milliseconds, AVRational timeBase)
+        {
+            return milliseconds * timeBase.Den / timeBase.Num / 1000;
+        }
+
+        long GetMillisecondsFromVideoTimestamp(long timestamp, AVRational timeBase)
+        {
+            return timestamp * 1000 * timeBase.Num / timeBase.Den;
+        }
+
+        void Decode(
             FormatContext inputFormatContext,
             CodecContext? videoDecoder,
             CodecContext? audioDecoder,
-            int videoFrameCount,
-            int audioSampleCount,
             int videoStreamIndex,
-            int audioStreamIndex)
+            int audioStreamIndex,
+            long timeMilliseconds)
         {
             using var packet = new Packet();
             using var frame = new Frame();
             var codecResult = default(CodecResult);
 
-            while (
-                _decodedVideoFrames.Count < videoFrameCount ||
-                _decodedAudioSamples.Count < audioSampleCount)
+
+            if (timeMilliseconds < _currentFrameTimeMilliseconds ||
+                timeMilliseconds > _currentFrameTimeMilliseconds + MillisecondsToSeek ||
+                !_currentVideoFrame.HasValue)
             {
-                // try receive frame
+                Debug.WriteLine("MediaSource Seek");
+
                 if (videoDecoder is not null)
                 {
-                    codecResult = videoDecoder.ReceiveFrame(frame);
-                    if (codecResult == CodecResult.Success)
+                    var videoTimestamp = GetTimestampFromMilliseconds(timeMilliseconds, _inputVideoStream!.Value.TimeBase);
+                    _inputFormatContext.SeekFrame(videoTimestamp, videoStreamIndex);
+                }
+                else if (audioDecoder is not null)
+                {
+                    var audioTimestamp = GetTimestampFromMilliseconds(timeMilliseconds, _inputAudioStream!.Value.TimeBase);
+                    _inputFormatContext.SeekFrame(audioTimestamp, audioStreamIndex);
+                }
+            }
+
+            while (true)
+            {
+                // receive all video frames
+                if (videoDecoder is not null)
+                {
+                    while (true)
                     {
-                        _decodedVideoFrames.Add(CreateVideoFrame(frame));
+                        codecResult = videoDecoder.ReceiveFrame(frame);
+
+                        var frameTimestamp = GetVideoFrameTimestamp(frame);
+                        var frameMilliseconds = GetMillisecondsFromVideoTimestamp(frameTimestamp, _inputVideoStream!.Value.TimeBase);
+
+                        if (codecResult == CodecResult.EOF)
+                        {
+                            return;
+                        }
+
+                        if (codecResult == CodecResult.Again)
+                        {
+                            break;
+                        }
+
+                        if (frameMilliseconds >= timeMilliseconds)
+                        {
+                            _currentVideoFrame = CreateVideoFrame(frame);
+                            _currentFrameTimeMilliseconds = frameMilliseconds;
+                            return;
+                        }
                     }
                 }
 
+                // receive all audio frames
                 if (audioDecoder is not null)
                 {
-                    codecResult = audioDecoder.ReceiveFrame(frame);
-                    if (codecResult == CodecResult.Success)
+                    while (true)
                     {
-                        _decodedAudioSamples.AddRange(CreateAudioSamples(frame));
+                        codecResult = audioDecoder.ReceiveFrame(frame);
+
+                        //var frameTimestamp = GetVideoFrameTimestamp(frame);
+                        //var frameMilliseconds = GetMillisecondsFromVideoTimestamp(frameTimestamp, _inputVideoStream!.Value.TimeBase);
+
+                        if (codecResult == CodecResult.EOF)
+                        {
+                            return;
+                        }
+
+                        if (codecResult == CodecResult.Again)
+                        {
+                            break;
+                        }
+
+                        //if (frameMilliseconds >= timeMilliseconds)
+                        //{
+                        //    _currentVideoFrame = CreateVideoFrame(frame);
+                        //    return;
+                        //}
                     }
                 }
 
@@ -171,100 +243,44 @@ namespace FFmpegVideoRenderer
                     }
                 }
                 while (codecResult == CodecResult.Again);
-
-                // eof, break
-                if (codecResult == CodecResult.EOF)
-                {
-                    break;
-                }
-
-                // decode
-                if (videoDecoder is not null)
-                {
-                    codecResult = videoDecoder.ReceiveFrame(frame);
-                    if (codecResult == CodecResult.Success)
-                    {
-                        _decodedVideoFrames.Add(CreateVideoFrame(frame));
-                    }
-                }
-
-                if (audioDecoder is not null)
-                {
-                    codecResult = audioDecoder.ReceiveFrame(frame);
-                    if (codecResult == CodecResult.Success)
-                    {
-                        _decodedAudioSamples.AddRange(CreateAudioSamples(frame));
-                    }
-                }
             }
         }
 
-        public VideoFrame GetVideoFrame(long timeMilliseconds)
+        private long GetVideoFrameTimestamp(Frame frame)
         {
-            if (_inputVideoDecoder is null)
+            return frame.BestEffortTimestamp;
+            return frame.Pts * frame.TimeBase.Num / frame.TimeBase.Den;
+        }
+
+        public unsafe VideoFrame GetVideoFrame(long timeMilliseconds)
+        {
+            if (_inputVideoStream is null ||
+                _inputVideoDecoder is null)
                 throw new InvalidOperationException("No video stream");
 
-            var targetFrameIndex = GetVideoFrameIndex(timeMilliseconds, _inputVideoStream.RFrameRate);
-
-            EnsureDecoded(_inputFormatContext, _inputVideoDecoder, _inputAudioDecoder, targetFrameIndex + 1, 0, _inputVideoStream.Index, _inputAudioStream.Index);
-
-            if (targetFrameIndex >= _decodedVideoFrames.Count)
+            if (timeMilliseconds == _currentFrameTimeMilliseconds && 
+                _currentVideoFrame.HasValue)
             {
-                targetFrameIndex = _decodedVideoFrames.Count - 1;
+                return _currentVideoFrame.Value;
             }
 
-            return _decodedVideoFrames[targetFrameIndex];
+            Decode(_inputFormatContext, _inputVideoDecoder, _inputAudioDecoder, _inputVideoStream?.Index ?? -1, _inputAudioStream?.Index ?? -1, timeMilliseconds);
+
+            if (_currentVideoFrame.HasValue)
+            {
+                return _currentVideoFrame.Value;
+            }
+
+            throw new ArgumentException("Invalid time");
         }
 
         public AudioSample GetAudioSample(long timeMilliseconds)
         {
-            if (_inputVideoDecoder is null)
-                throw new InvalidOperationException("No video stream");
+            if (_inputAudioStream is null ||
+                _inputAudioDecoder is null)
+                throw new InvalidOperationException("No audio stream");
 
-            var targetSampleIndex = GetAudioSampleIndex(timeMilliseconds, _inputAudioStream.RFrameRate);
-
-            EnsureDecoded(_inputFormatContext, _inputVideoDecoder, _inputAudioDecoder, 0, targetSampleIndex + 1, _inputVideoStream.Index, _inputAudioStream.Index);
-
-            if (targetSampleIndex >= _decodedAudioSamples.Count)
-            {
-                targetSampleIndex = _decodedAudioSamples.Count - 1;
-            }
-
-            return _decodedAudioSamples[targetSampleIndex];
-        }
-
-        public int GetVideoFrameIndex(long timeMilliseconds)
-        {
-            return GetVideoFrameIndex(timeMilliseconds, _inputVideoStream.RFrameRate);
-        }
-
-        public int GetAudioSampleIndex(long timeMilliseconds)
-        {
-            return GetAudioSampleIndex(timeMilliseconds, default);
-        }
-
-        public VideoFrame GetVideoFrameFromIndex(int index)
-        {
-            EnsureDecoded(_inputFormatContext, _inputVideoDecoder, _inputAudioDecoder, index + 1, 0, _inputVideoStream.Index, _inputAudioStream.Index);
-
-            if (index >= _decodedVideoFrames.Count)
-            {
-                index = _decodedVideoFrames.Count - 1;
-            }
-
-            return _decodedVideoFrames[index];
-        }
-
-        public AudioSample GetAudioSampleFromIndex(int index)
-        {
-            EnsureDecoded(_inputFormatContext, _inputVideoDecoder, _inputAudioDecoder, 0, index + 1, _inputVideoStream.Index, _inputAudioStream.Index);
-
-            if (index >= _decodedAudioSamples.Count)
-            {
-                index = _decodedAudioSamples.Count - 1;
-            }
-
-            return _decodedAudioSamples[index];
+            throw new NotImplementedException();
         }
 
         protected virtual void Dispose(bool disposing)
@@ -296,5 +312,8 @@ namespace FFmpegVideoRenderer
             Dispose(disposing: true);
             GC.SuppressFinalize(this);
         }
+
+        //internal record struct CachedAudioFrame(int Index, AudioSample)
+        internal record struct CachedVideoFrame(int Index, VideoFrame Frame);
     }
 }
