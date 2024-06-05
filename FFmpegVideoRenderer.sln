@@ -1,0 +1,31 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.9.34723.18
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "FFmpegVideoRenderer", "FFmpegVideoRenderer\FFmpegVideoRenderer.csproj", "{7660C43B-9633-489D-8478-D54597E4653E}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TestConsole", "TestConsole\TestConsole.csproj", "{014CBF6E-C852-4D2D-B639-BBCCFC295A2A}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{7660C43B-9633-489D-8478-D54597E4653E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7660C43B-9633-489D-8478-D54597E4653E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7660C43B-9633-489D-8478-D54597E4653E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{7660C43B-9633-489D-8478-D54597E4653E}.Release|Any CPU.Build.0 = Release|Any CPU
+		{014CBF6E-C852-4D2D-B639-BBCCFC295A2A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{014CBF6E-C852-4D2D-B639-BBCCFC295A2A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{014CBF6E-C852-4D2D-B639-BBCCFC295A2A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{014CBF6E-C852-4D2D-B639-BBCCFC295A2A}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {D2F742BA-74CF-43C4-A8B1-0A1ABF83391E}
+	EndGlobalSection
+EndGlobal
