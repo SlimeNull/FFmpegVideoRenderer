@@ -1,21 +1,33 @@
-﻿using FFmpegVideoRenderer;
+﻿using System.Diagnostics;
+using FFmpegVideoRenderer;
 using SkiaSharp;
+using Spectre.Console;
 
 var mediaPath = @"E:\CloudMusic\MV\ナナツカゼ,PIKASONIC,なこたんまる - 春めく.mp4";
 var mediaStream = File.OpenRead(mediaPath);
 MediaSource mediaSource = new MediaSource(mediaStream);
 
 using var bitmap = new SKBitmap(mediaSource.VideoFrameWidth, mediaSource.VideoFrameHeight, SKColorType.Bgra8888, SKAlphaType.Unpremul);
+//var stopwatch = Stopwatch.StartNew();
 
-for (int i = 0; i < 30 && i < mediaSource.VideoFrameCount; i++)
+int i = 0;
+while (true)
 {
-    var frame = mediaSource.GetVideoFrame(i * 30 * 10 * 5);
+    //var ms = stopwatch.ElapsedMilliseconds;
+    i += 30;
+    if (i < 0)
+        i = 0;
+
+    var frame = mediaSource.GetVideoFrame(i);
+
+    //frame.FillBitmap(bitmap);
 
 
-    frame.FillBitmap(bitmap);
-    using var output = File.Create($"output{i}.png");
-    bitmap.Encode(output, SKEncodedImageFormat.Png, 114514);
+    //var canvasImage = new CanvasImage(bitmap.Encode(SKEncodedImageFormat.Jpeg, 100).AsSpan());
+    //Console.SetCursorPosition(0, 0);
+    //AnsiConsole.Write(canvasImage);
 }
+
 
 Console.WriteLine("Done.");
 Console.ReadKey(true);
