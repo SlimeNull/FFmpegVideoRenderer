@@ -1,8 +1,7 @@
 ﻿namespace FFmpegVideoRenderer
 {
-    public class ProjectResource
+    public record ProjectResource(string Id, Stream SourceStream)
     {
-        public string Id { get; set; } = "Resource";
-        public Stream? SourceStream { get; set; }
+
     }
 }

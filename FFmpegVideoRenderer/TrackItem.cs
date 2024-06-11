@@ -1,7 +1,7 @@
 ﻿namespace FFmpegVideoRenderer
 {
 
-    public abstract class TrackItem
+    public class TrackItem
     {
         public string ResourceId { get; set; } = "SomeResource";
 
@@ -19,5 +19,41 @@
         /// Relative end time to resource
         /// </summary>
         public TimeSpan EndTime { get; set; }
+
+        /// <summary>
+        /// Duration of this track item
+        /// </summary>
+        public TimeSpan Duration => EndTime - StartTime;
+
+        /// <summary>
+        /// Absolute end time in track
+        /// </summary>
+        public TimeSpan AbsoluteEndTime => Offset + Duration;
+
+        public bool IsTimeInRange(TimeSpan time)
+        {
+            return time >= Offset && time <= AbsoluteEndTime;
+        }
+
+        public static bool GetIntersectionRate(TrackItem item1, TrackItem item2, TimeSpan time, out double rate)
+        {
+            if (item1.Offset > item2.Offset)
+            {
+                (item1, item2) = (item2, item1);
+            }
+
+            if (item2.Offset > item1.AbsoluteEndTime ||
+                item1.AbsoluteEndTime > item2.AbsoluteEndTime)
+            {
+                rate = default;
+                return false;
+            }
+
+            TimeSpan intersectionStart = item2.Offset;
+            TimeSpan intersectionDuration = item1.AbsoluteEndTime - item2.Offset;
+
+            rate = (time - intersectionStart) / intersectionDuration;
+            return true;
+        }
     }
 }

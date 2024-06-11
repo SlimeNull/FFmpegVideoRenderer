@@ -8,6 +8,7 @@ using Sdcb.FFmpeg.Formats;
 using Sdcb.FFmpeg.Raw;
 using Sdcb.FFmpeg.Swscales;
 using Sdcb.FFmpeg.Utils;
+using SkiaSharp;
 
 namespace FFmpegVideoRenderer
 {
@@ -35,6 +36,7 @@ namespace FFmpegVideoRenderer
         //private Frame _decodeFrame = new();
 
         private Frame? _convertedVideoFrame;
+        private SKBitmap? _videoFrameBitmap;
 
         public int AudioFrameCacheSize { get; set; } = 2000;
         public int VideoFrameCacheSize { get; set; } = 50;
@@ -400,6 +402,23 @@ namespace FFmpegVideoRenderer
             }
 
             throw new ArgumentException("Invalid time");
+        }
+
+        public SKBitmap? GetVideoFrameBitmap(long timeMilliseconds)
+        {
+            if (GetVideoFrame(timeMilliseconds) is VideoFrame frame)
+            {
+                if (_videoFrameBitmap is null)
+                {
+                    _videoFrameBitmap = new SKBitmap(VideoFrameWidth, VideoFrameHeight, SKColorType.Bgra8888, SKAlphaType.Unpremul);
+                }
+
+                frame.FillBitmap(_videoFrameBitmap);
+
+                return _videoFrameBitmap;
+            }
+
+            return null;
         }
 
         public AudioSample? GetAudioSample(long timeMilliseconds)

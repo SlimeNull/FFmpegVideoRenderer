@@ -7,5 +7,8 @@
 
         public List<Track> AudioTracks { get; } = new();
         public List<Track> VideoTracks { get; } = new();
+
+        public int OutputWidth { get; set; }
+        public int OutputHeight { get; set; }
     }
 }
