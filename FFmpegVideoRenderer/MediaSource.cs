@@ -54,7 +54,7 @@ namespace FFmpegVideoRenderer
             _inputContext = IOContext.ReadStream(stream);
             _inputFormatContext = FormatContext.OpenInputIO(_inputContext);
 
-            _videoDataArrayPool = ArrayPool<byte>.Create();
+            _videoDataArrayPool = ArrayPool<byte>.Create(5 * 1024 * 1024, 24);
             _audioDataArrayPool = ArrayPool<AudioSample>.Create();
 
             // initialize
