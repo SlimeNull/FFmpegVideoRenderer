@@ -35,7 +35,7 @@
             return time >= Offset && time <= AbsoluteEndTime;
         }
 
-        public static bool GetIntersectionRate(TrackItem item1, TrackItem item2, TimeSpan time, out double rate)
+        public static bool GetIntersectionRate(ref TrackItem item1, ref TrackItem item2, TimeSpan time, out double rate)
         {
             if (item1.Offset > item2.Offset)
             {

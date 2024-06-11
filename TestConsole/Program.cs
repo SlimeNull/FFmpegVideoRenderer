@@ -59,14 +59,14 @@ var project = new Project()
                     ResourceId = "1",
                     Offset = TimeSpan.FromSeconds(0),
                     StartTime = TimeSpan.FromSeconds(0),
-                    EndTime = TimeSpan.FromSeconds(5),
+                    EndTime = TimeSpan.FromSeconds(6),
                 },
                 new TrackItem()
                 {
                     ResourceId = "2",
-                    Offset = TimeSpan.FromSeconds(5),
+                    Offset = TimeSpan.FromSeconds(4),
                     StartTime = TimeSpan.FromSeconds(0),
-                    EndTime = TimeSpan.FromSeconds(5),
+                    EndTime = TimeSpan.FromSeconds(6),
                 }
             }
         }

@@ -23,6 +23,16 @@ namespace FFmpegVideoRenderer
             return false;
         }
 
+        static TimeSpan GetMediaSourceFrameTime(TrackItem trackItem, TimeSpan globalTime)
+        {
+            return globalTime - trackItem.Offset + trackItem.StartTime;
+        }
+
+        static SKRect LayoutVideoTrackItem(Project project, TrackItem videoTrackItem)
+        {
+            return new SKRect(0, 0, project.OutputWidth, project.OutputHeight);
+        }
+
         public static unsafe void Render(Project project, Stream outputStream, IProgress<RenderProgress>? progress)
         {
             Dictionary<string, MediaSource> _audioMediaSources = new();
@@ -101,7 +111,7 @@ namespace FFmpegVideoRenderer
 
             // video encoding
             #region Video Encoding
-            int frameIndex = 0;
+            long frameIndex = 0;
             while (true)
             {
                 var time = TimeSpan.FromSeconds((double)frameIndex * Framerate.Num / Framerate.Den);
@@ -112,7 +122,8 @@ namespace FFmpegVideoRenderer
 
                 canvas.Clear();
 
-                foreach (var track in project.VideoTracks)
+                // 从下网上绘制
+                foreach (var track in project.VideoTracks.Reverse<Track>())
                 {
                     trackItemsToRender.Clear();
                     foreach (var trackItem in track.Children.Where(trackItem => trackItem.IsTimeInRange(time)))
@@ -125,16 +136,62 @@ namespace FFmpegVideoRenderer
                         var trackItem = trackItemsToRender[0];
                         if (_videoMediaSources.TryGetValue(trackItem.ResourceId, out var mediaSource))
                         {
-                            var relativeTime = (long)((time - trackItem.Offset).TotalMilliseconds);
-                            if (mediaSource.GetVideoFrameBitmap(relativeTime) is SKBitmap frameBitmap)
+                            var frameTime = (long)GetMediaSourceFrameTime(trackItem, time).TotalMilliseconds;
+                            if (mediaSource.GetVideoFrameBitmap(frameTime) is SKBitmap frameBitmap)
                             {
-                                canvas.DrawBitmap(frameBitmap, default(SKPoint));
+                                var dest = LayoutVideoTrackItem(project, trackItem);
+                                canvas.DrawBitmap(frameBitmap, dest);
                             }
                         }
                     }
                     else if (trackItemsToRender.Count >= 2)
                     {
+                        var trackItem1 = trackItemsToRender[0];
+                        var trackItem2 = trackItemsToRender[1];
 
+                        if (_videoMediaSources.TryGetValue(trackItem1.ResourceId, out var mediaSource1) &&
+                            _videoMediaSources.TryGetValue(trackItem2.ResourceId, out var mediaSource2) &&
+                            TrackItem.GetIntersectionRate(ref trackItem1, ref trackItem2, time, out var rate))
+                        {
+                            var relativeTime1 = (long)GetMediaSourceFrameTime(trackItem1, time).TotalMilliseconds;
+                            var relativeTime2 = (long)GetMediaSourceFrameTime(trackItem2, time).TotalMilliseconds;
+
+                            if (mediaSource1.GetVideoFrameBitmap(relativeTime1) is SKBitmap frameBitmap1 &&
+                                mediaSource2.GetVideoFrameBitmap(relativeTime2) is SKBitmap frameBitmap2)
+                            {
+                                var dest1 = LayoutVideoTrackItem(project, trackItem1);
+                                var dest2 = LayoutVideoTrackItem(project, trackItem2);
+
+                                using var paint1 = new SKPaint()
+                                {
+                                    Color = new SKColor(255, 255, 255, (byte)(255 - rate * 255)),
+                                };
+
+                                using var paint2 = new SKPaint()
+                                {
+                                    Color = new SKColor(255, 255, 255, (byte)(rate * 255)),
+                                };
+
+                                canvas.DrawBitmap(frameBitmap1, dest1, paint1);
+                                canvas.DrawBitmap(frameBitmap2, dest2, paint2);
+                            }
+
+                            for (int j = 2; j < trackItemsToRender.Count; j++)
+                            {
+                                var trackItemOther = trackItemsToRender[j];
+                                var relativeTimeOther = (long)((time - trackItemOther.Offset).TotalMilliseconds);
+
+                                if (_videoMediaSources.TryGetValue(trackItemOther.ResourceId, out var mediaSourceOther) &&
+                                    mediaSourceOther.GetVideoFrameBitmap(relativeTimeOther) is SKBitmap frameBitmapOther)
+                                {
+
+                                }
+                            }
+                        }
+                        else
+                        {
+
+                        }
                     }
                 }
 
