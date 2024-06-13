@@ -81,27 +81,29 @@ using Spectre.Console;
 
 
 using var audioToDecode =
-    File.OpenRead(@"E:\CloudMusic\MV\ナナツカゼ,PIKASONIC,なこたんまる - 春めく.mp4");
+    File.OpenRead(@"E:\CloudMusic\MV\Erdenebat Baatar,Lkhamragchaa Lkhagvasuren,Altanjargal - Goyo (feat. Lkhamragchaa Lkhagvasuren, Altanjargal, Erdenechimeg G, Narandulam, Dashnyam & Uul Us).mp4");
 using var audioSourceToDecode = new MediaSource(audioToDecode);
 var pcm = new List<float>();
 
-for (int i = 0; i < 30; i++)
+for (int i = 0; i < 60; i++)
 {
-    for (int j = 0; j < 44100; j++)
+    for (int j = 0; j < 22050; j++)
     {
-        var time = TimeSpan.FromSeconds(i + j / (44100.0));
+        var time = TimeSpan.FromSeconds(i + j / (22050.0));
         if (audioSourceToDecode.GetAudioSample(time) is AudioSample sample)
         {
             pcm.Add(sample.LeftValue);
-            pcm.Add(sample.RightValue);
+            //pcm.Add(sample.RightValue);
         }
         else
         {
             pcm.Add(0);
-            pcm.Add(0);
+            //pcm.Add(0);
         }
     }
 }
+
+//pcm = MediaSource.s_pcmLeftSamples;
 
 var pcmArray = pcm.ToArray();
 var pcmSpan = pcmArray.AsSpan();

@@ -160,10 +160,10 @@ namespace FFmpegVideoRenderer
             return new VideoFrame(_convertedVideoFrame.Width, _convertedVideoFrame.Height, GetDataByteArrayFromFrame(_convertedVideoFrame, arrayPool), _convertedVideoFrame.Linesize[0], 4, SkiaSharp.SKColorType.Bgra8888);
         }
 
-        unsafe AudioFrame CreateAudioSamples(Frame originAudioFrame, ArrayPool<AudioSample> arrayPool, int frameSampleCount)
+        unsafe AudioFrame CreateAudioSamples(Frame originAudioFrame, ArrayPool<AudioSample> arrayPool, int sampleCount)
         {
             var channels = originAudioFrame.ChLayout.nb_channels;
-            var resultSampleCount = originAudioFrame.NbSamples / channels;
+            var resultSampleCount = originAudioFrame.NbSamples;
             var samples = arrayPool.Rent(resultSampleCount);
 
             switch ((AVSampleFormat)originAudioFrame.Format)
@@ -171,7 +171,7 @@ namespace FFmpegVideoRenderer
                 case AVSampleFormat.Flt:
                 {
                     var dataPtr = (float*)originAudioFrame.Data[0];
-                    for (int dataIndex = 0, resultIndex = 0; dataIndex < frameSampleCount; dataIndex += channels, resultIndex++)
+                    for (int dataIndex = 0, resultIndex = 0; dataIndex < sampleCount; dataIndex += channels, resultIndex++)
                     {
                         samples[resultIndex] = new AudioSample()
                         {
@@ -186,7 +186,7 @@ namespace FFmpegVideoRenderer
                 case AVSampleFormat.S16:
                 {
                     var dataPtr = (short*)originAudioFrame.Data[0];
-                    for (int dataIndex = 0, resultIndex = 0; dataIndex < frameSampleCount; dataIndex += channels, resultIndex++)
+                    for (int dataIndex = 0, resultIndex = 0; dataIndex < sampleCount; dataIndex += channels, resultIndex++)
                     {
                         samples[resultIndex] = new AudioSample()
                         {
@@ -201,7 +201,7 @@ namespace FFmpegVideoRenderer
                 case AVSampleFormat.S32:
                 {
                     var dataPtr = (int*)originAudioFrame.Data[0];
-                    for (int dataIndex = 0, resultIndex = 0; dataIndex < frameSampleCount; dataIndex += channels, resultIndex++)
+                    for (int dataIndex = 0, resultIndex = 0; dataIndex < sampleCount; dataIndex += channels, resultIndex++)
                     {
                         samples[resultIndex] = new AudioSample()
                         {
@@ -217,9 +217,9 @@ namespace FFmpegVideoRenderer
                 {
                     var leftDataPtr = (float*)originAudioFrame.Data[0];
                     var rightDataPtr = (float*)originAudioFrame.Data[1];
-                    var sampleCountPerPlane = frameSampleCount / channels;
+                    //var sampleCountPerPlane = frameSampleCount / channels;
 
-                    for (int dataIndex = 0, resultIndex = 0; dataIndex < sampleCountPerPlane; dataIndex++, resultIndex++)
+                    for (int dataIndex = 0, resultIndex = 0; dataIndex < sampleCount; dataIndex++, resultIndex++)
                     {
                         samples[resultIndex] = new AudioSample()
                         {
@@ -252,7 +252,7 @@ namespace FFmpegVideoRenderer
 
         bool GetAudioSampleFromFrame(AudioFrame frame, float sampleRate, int channelCount, TimeSpan timeOffset, out AudioSample audioSample)
         {
-            var index = (int)(timeOffset.TotalSeconds * (sampleRate / channelCount));
+            var index = (int)(timeOffset.TotalSeconds * sampleRate);
             if (index >= 0 && index < frame.SampleCount)
             {
                 audioSample = frame.Samples[index];
@@ -284,7 +284,7 @@ namespace FFmpegVideoRenderer
                         time > _currentVideoFrameTime + TimeSpanToSeek ||
                         !_currentVideoFrame.HasValue)
                     {
-                        Debug.WriteLine("MediaSource Seek");
+                        Console.WriteLine("MediaSource Seek");
 
                         if (videoDecoder is not null)
                         {
@@ -314,7 +314,7 @@ namespace FFmpegVideoRenderer
                         time > _currentAudioFrameTime + TimeSpanToSeek ||
                         !_currentAudioFrame.HasValue)
                     {
-                        Debug.WriteLine("MediaSource Seek");
+                        Console.WriteLine("MediaSource Seek");
                         if (audioDecoder is not null)
                         {
                             var audioTimestamp = GetTimestampFromTime(time, _inputAudioStream!.Value.TimeBase);
@@ -359,7 +359,7 @@ namespace FFmpegVideoRenderer
 
                             var frameTimestamp = GetVideoFrameTimestamp(frame);
                             var frameTime = GetTimeFromStreamTimestamp(frameTimestamp, _inputAudioStream!.Value.TimeBase);
-                            var frameDuration = TimeSpan.FromSeconds((double)frame.NbSamples / frame.SampleRate);
+                            var frameDuration = TimeSpan.FromSeconds((double)frame.NbSamples / frame.SampleRate * frame.ChLayout.nb_channels);
 
                             // free array renting
                             if (_currentAudioFrame.HasValue &&
@@ -370,10 +370,13 @@ namespace FFmpegVideoRenderer
 
                             _currentAudioFrame = CreateAudioSamples(frame, _audioDataArrayPool, frame.NbSamples);
                             _currentAudioFrameTime = frameTime;
+
                             if (frameTime + frameDuration >= time)
                             {
                                 return;
                             }
+
+                            Console.WriteLine("skip one audio frame");
                         }
                     }
 
