@@ -27,7 +27,8 @@ namespace FFmpegVideoRenderer
 
         private bool _disposedValue;
 
-        private long _currentFrameTimeMilliseconds = 0;
+        private TimeSpan _currentVideoFrameTime = default;
+        private TimeSpan _currentAudioFrameTime = default;
 
         private VideoFrame? _currentVideoFrame;
         private AudioFrame? _currentAudioFrame;
@@ -41,13 +42,15 @@ namespace FFmpegVideoRenderer
         public int AudioFrameCacheSize { get; set; } = 2000;
         public int VideoFrameCacheSize { get; set; } = 50;
 
-        public long MillisecondsToSeek { get; set; } = 1000;
-        public long MillisecondsDuration { get; }
+        public TimeSpan TimeSpanToSeek { get; set; } = TimeSpan.FromMilliseconds(1000);
+        public TimeSpan Duration { get; }
 
         public long VideoFrameCount => _inputVideoStream?.NbFrames ?? throw new InvalidOperationException("No audio stream");
         public int VideoFrameWidth => _inputVideoDecoder?.Width ?? throw new InvalidOperationException("No video stream");
         public int VideoFrameHeight => _inputVideoDecoder?.Height ?? throw new InvalidOperationException("No video stream");
 
+        public bool HasAudio => _inputAudioDecoder is not null;
+        public bool HasVideo => _inputVideoDecoder is not null;
 
 
         public MediaSource(Stream stream)
@@ -57,7 +60,7 @@ namespace FFmpegVideoRenderer
             _inputFormatContext = FormatContext.OpenInputIO(_inputContext);
 
             _videoDataArrayPool = ArrayPool<byte>.Create(5 * 1024 * 1024, 24);
-            _audioDataArrayPool = ArrayPool<AudioSample>.Create();
+            _audioDataArrayPool = ArrayPool<AudioSample>.Create(5 * 1024 * 1024, 24);
 
             // initialize
             _inputFormatContext.LoadStreamInfo();
@@ -89,23 +92,23 @@ namespace FFmpegVideoRenderer
                 _inputVideoDecoder.ReceiveFrame(frame);
             }
 
-            var millisecondsDuration = (long)0;
+            TimeSpan duration = default;
 
             if (_inputVideoStream is not null)
             {
-                var videoDuration = _inputVideoStream.Value.Duration * 1000 * _inputVideoStream.Value.TimeBase.Num / _inputVideoStream.Value.TimeBase.Den;
-                if (videoDuration > millisecondsDuration)
-                    millisecondsDuration = videoDuration;
+                var videoDuration = TimeSpan.FromSeconds((double)_inputVideoStream.Value.Duration * _inputVideoStream.Value.TimeBase.Num / _inputVideoStream.Value.TimeBase.Den);
+                if (videoDuration > duration)
+                    duration = videoDuration;
             }
 
             if (_inputAudioStream is not null)
             {
-                var audioDuration = _inputAudioStream.Value.Duration * 1000 * _inputAudioStream.Value.TimeBase.Num / _inputAudioStream.Value.TimeBase.Den;
-                if (audioDuration > millisecondsDuration)
-                    millisecondsDuration = audioDuration;
+                var audioDuration = TimeSpan.FromSeconds((double)_inputAudioStream.Value.Duration * _inputAudioStream.Value.TimeBase.Num / _inputAudioStream.Value.TimeBase.Den);
+                if (audioDuration > duration)
+                    duration = audioDuration;
             }
 
-            MillisecondsDuration = millisecondsDuration;
+            Duration = duration;
         }
 
 
@@ -160,7 +163,7 @@ namespace FFmpegVideoRenderer
         unsafe AudioFrame CreateAudioSamples(Frame originAudioFrame, ArrayPool<AudioSample> arrayPool, int frameSampleCount)
         {
             var channels = originAudioFrame.ChLayout.nb_channels;
-            var resultSampleCount = frameSampleCount / channels;
+            var resultSampleCount = originAudioFrame.NbSamples / channels;
             var samples = arrayPool.Rent(resultSampleCount);
 
             switch ((AVSampleFormat)originAudioFrame.Format)
@@ -209,29 +212,47 @@ namespace FFmpegVideoRenderer
 
                     break;
                 }
+
+                case AVSampleFormat.Fltp:
+                {
+                    var leftDataPtr = (float*)originAudioFrame.Data[0];
+                    var rightDataPtr = (float*)originAudioFrame.Data[1];
+                    var sampleCountPerPlane = frameSampleCount / channels;
+
+                    for (int dataIndex = 0, resultIndex = 0; dataIndex < sampleCountPerPlane; dataIndex++, resultIndex++)
+                    {
+                        samples[resultIndex] = new AudioSample()
+                        {
+                            LeftValue = leftDataPtr[dataIndex],
+                            RightValue = rightDataPtr[dataIndex],
+                        };
+                    }
+
+                    break;
+                }
             }
 
             return new AudioFrame(samples, resultSampleCount);
         }
 
-        long GetTimestampFromMilliseconds(long milliseconds, AVRational timeBase)
+        long GetTimestampFromTime(TimeSpan milliseconds, AVRational timeBase)
         {
-            return milliseconds * timeBase.Den / timeBase.Num / 1000;
+            return (long)milliseconds.TotalSeconds * timeBase.Den / timeBase.Num;
         }
 
-        long GetMillisecondsFromVideoTimestamp(long timestamp, AVRational timeBase)
+        TimeSpan GetTimeFromStreamTimestamp(long timestamp, AVRational timeBase)
         {
-            return timestamp * 1000 * timeBase.Num / timeBase.Den;
+            return TimeSpan.FromSeconds((double)timestamp * timeBase.Num / timeBase.Den);
         }
 
-        long GetAudioFrameMillisecondsDuration(AudioFrame frame, float sampleRate, int channelCount)
+        TimeSpan GetAudioFrameDuration(AudioFrame frame, float sampleRate, int channelCount)
         {
-            return (long)(frame.SampleCount * 1000 / sampleRate / channelCount);
+            return TimeSpan.FromSeconds(frame.SampleCount / sampleRate / channelCount);
         }
 
-        bool GetAudioSampleFromFrame(AudioFrame frame, float sampleRate, int channelCount, long timeOffsetMilliseconds, out AudioSample audioSample)
+        bool GetAudioSampleFromFrame(AudioFrame frame, float sampleRate, int channelCount, TimeSpan timeOffset, out AudioSample audioSample)
         {
-            var index = (int)(timeOffsetMilliseconds * sampleRate / channelCount / 1000);
+            var index = (int)(timeOffset.TotalSeconds * (sampleRate / channelCount));
             if (index >= 0 && index < frame.SampleCount)
             {
                 audioSample = frame.Samples[index];
@@ -242,14 +263,14 @@ namespace FFmpegVideoRenderer
             return false;
         }
 
-        void Decode(
+        unsafe void Decode(
             FormatContext inputFormatContext,
             CodecContext? videoDecoder,
             CodecContext? audioDecoder,
             AVMediaType mediaType,
             int videoStreamIndex,
             int audioStreamIndex,
-            long timeMilliseconds)
+            TimeSpan time)
         {
             var codecResult = default(CodecResult);
             using var packet = new Packet();
@@ -257,61 +278,68 @@ namespace FFmpegVideoRenderer
 
             try
             {
-                if (timeMilliseconds < _currentFrameTimeMilliseconds ||
-                    timeMilliseconds > _currentFrameTimeMilliseconds + MillisecondsToSeek ||
-                    !_currentVideoFrame.HasValue)
+                if (mediaType == AVMediaType.Video)
                 {
-                    Debug.WriteLine("MediaSource Seek");
+                    if (time < _currentVideoFrameTime ||
+                        time > _currentVideoFrameTime + TimeSpanToSeek ||
+                        !_currentVideoFrame.HasValue)
+                    {
+                        Debug.WriteLine("MediaSource Seek");
 
-                    if (videoDecoder is not null)
-                    {
-                        var videoTimestamp = GetTimestampFromMilliseconds(timeMilliseconds, _inputVideoStream!.Value.TimeBase);
-                        _inputFormatContext.SeekFrame(videoTimestamp, videoStreamIndex);
+                        if (videoDecoder is not null)
+                        {
+                            var videoTimestamp = GetTimestampFromTime(time, _inputVideoStream!.Value.TimeBase);
+                            _inputFormatContext.SeekFrame(videoTimestamp, videoStreamIndex);
+                        }
+                        else if (audioDecoder is not null)
+                        {
+                            var audioTimestamp = GetTimestampFromTime(time, _inputAudioStream!.Value.TimeBase);
+                            _inputFormatContext.SeekFrame(audioTimestamp, audioStreamIndex);
+                        }
+
+                        if (_inputAudioDecoder is not null)
+                        {
+                            ffmpeg.avcodec_flush_buffers(_inputAudioDecoder);
+                        }
+
+                        if (_inputVideoDecoder is not null)
+                        {
+                            ffmpeg.avcodec_flush_buffers(_inputVideoDecoder);
+                        }
                     }
-                    else if (audioDecoder is not null)
+                }
+                else if (mediaType == AVMediaType.Audio)
+                {
+                    if (time < _currentAudioFrameTime ||
+                        time > _currentAudioFrameTime + TimeSpanToSeek ||
+                        !_currentAudioFrame.HasValue)
                     {
-                        var audioTimestamp = GetTimestampFromMilliseconds(timeMilliseconds, _inputAudioStream!.Value.TimeBase);
-                        _inputFormatContext.SeekFrame(audioTimestamp, audioStreamIndex);
+                        Debug.WriteLine("MediaSource Seek");
+                        if (audioDecoder is not null)
+                        {
+                            var audioTimestamp = GetTimestampFromTime(time, _inputAudioStream!.Value.TimeBase);
+                            _inputFormatContext.SeekFrame(audioTimestamp, audioStreamIndex);
+                        }
+                        else if (videoDecoder is not null)
+                        {
+                            var videoTimestamp = GetTimestampFromTime(time, _inputVideoStream!.Value.TimeBase);
+                            _inputFormatContext.SeekFrame(videoTimestamp, videoStreamIndex);
+                        }
+
+                        if (_inputAudioDecoder is not null)
+                        {
+                            ffmpeg.avcodec_flush_buffers(_inputAudioDecoder);
+                        }
+
+                        if (_inputVideoDecoder is not null)
+                        {
+                            ffmpeg.avcodec_flush_buffers(_inputVideoDecoder);
+                        }
                     }
                 }
 
                 while (true)
                 {
-                    // receive all video frames
-                    if (videoDecoder is not null)
-                    {
-                        while (true)
-                        {
-                            codecResult = videoDecoder.ReceiveFrame(frame);
-
-                            var frameTimestamp = GetVideoFrameTimestamp(frame);
-                            var frameMilliseconds = GetMillisecondsFromVideoTimestamp(frameTimestamp, _inputVideoStream!.Value.TimeBase);
-
-                            if (codecResult == CodecResult.EOF)
-                            {
-                                return;
-                            }
-
-                            if (codecResult == CodecResult.Again)
-                            {
-                                break;
-                            }
-
-                            if (_currentVideoFrame.HasValue &&
-                                _currentVideoFrame.Value.Data != null)
-                            {
-                                _videoDataArrayPool.Return(_currentVideoFrame.Value.Data);
-                            }
-
-                            _currentVideoFrame = CreateVideoFrame(frame, _videoDataArrayPool);
-                            _currentFrameTimeMilliseconds = frameMilliseconds;
-                            if (frameMilliseconds >= timeMilliseconds && mediaType == AVMediaType.Video)
-                            {
-                                return;
-                            }
-                        }
-                    }
-
                     // receive all audio frames
                     if (audioDecoder is not null)
                     {
@@ -319,9 +347,6 @@ namespace FFmpegVideoRenderer
                         {
                             codecResult = audioDecoder.ReceiveFrame(frame);
 
-                            var frameTimestamp = GetVideoFrameTimestamp(frame);
-                            var frameMilliseconds = GetMillisecondsFromVideoTimestamp(frameTimestamp, _inputAudioStream!.Value.TimeBase);
-
                             if (codecResult == CodecResult.EOF)
                             {
                                 return;
@@ -331,6 +356,10 @@ namespace FFmpegVideoRenderer
                             {
                                 break;
                             }
+
+                            var frameTimestamp = GetVideoFrameTimestamp(frame);
+                            var frameTime = GetTimeFromStreamTimestamp(frameTimestamp, _inputAudioStream!.Value.TimeBase);
+                            var frameDuration = TimeSpan.FromSeconds((double)frame.NbSamples / frame.SampleRate);
 
                             // free array renting
                             if (_currentAudioFrame.HasValue &&
@@ -339,9 +368,44 @@ namespace FFmpegVideoRenderer
                                 _audioDataArrayPool.Return(_currentAudioFrame.Value.Samples);
                             }
 
-                            _currentAudioFrame = CreateAudioSamples(frame, _audioDataArrayPool, audioDecoder.FrameSize);
-                            _currentFrameTimeMilliseconds = frameMilliseconds;
-                            if (frameMilliseconds >= timeMilliseconds)
+                            _currentAudioFrame = CreateAudioSamples(frame, _audioDataArrayPool, frame.NbSamples);
+                            _currentAudioFrameTime = frameTime;
+                            if (frameTime + frameDuration >= time)
+                            {
+                                return;
+                            }
+                        }
+                    }
+
+                    // receive all video frames
+                    if (videoDecoder is not null)
+                    {
+                        while (true)
+                        {
+                            codecResult = videoDecoder.ReceiveFrame(frame);
+
+                            if (codecResult == CodecResult.EOF)
+                            {
+                                return;
+                            }
+
+                            if (codecResult == CodecResult.Again)
+                            {
+                                break;
+                            }
+
+                            var frameTimestamp = GetVideoFrameTimestamp(frame);
+                            var frameTime = GetTimeFromStreamTimestamp(frameTimestamp, _inputVideoStream!.Value.TimeBase);
+
+                            if (_currentVideoFrame.HasValue &&
+                                _currentVideoFrame.Value.Data != null)
+                            {
+                                _videoDataArrayPool.Return(_currentVideoFrame.Value.Data);
+                            }
+
+                            _currentVideoFrame = CreateVideoFrame(frame, _videoDataArrayPool);
+                            _currentVideoFrameTime = frameTime;
+                            if (frameTime >= time && mediaType == AVMediaType.Video)
                             {
                                 return;
                             }
@@ -377,36 +441,36 @@ namespace FFmpegVideoRenderer
             return frame.BestEffortTimestamp;
         }
 
-        public unsafe VideoFrame? GetVideoFrame(long timeMilliseconds)
+        public unsafe VideoFrame? GetVideoFrame(TimeSpan time)
         {
             if (_inputVideoStream is null ||
                 _inputVideoDecoder is null)
                 throw new InvalidOperationException("No video stream");
 
-            if (timeMilliseconds > MillisecondsDuration)
+            if (time > Duration)
             {
                 return null;
             }
 
             if (_currentVideoFrame.HasValue &&
-                timeMilliseconds == _currentFrameTimeMilliseconds)
+                time == _currentVideoFrameTime)
             {
                 return _currentVideoFrame.Value;
             }
 
-            Decode(_inputFormatContext, _inputVideoDecoder, _inputAudioDecoder, AVMediaType.Video, _inputVideoStream?.Index ?? -1, _inputAudioStream?.Index ?? -1, timeMilliseconds);
+            Decode(_inputFormatContext, _inputVideoDecoder, _inputAudioDecoder, AVMediaType.Video, _inputVideoStream?.Index ?? -1, _inputAudioStream?.Index ?? -1, time);
 
             if (_currentVideoFrame.HasValue)
             {
                 return _currentVideoFrame.Value;
             }
 
-            throw new ArgumentException("Invalid time");
+            return null;
         }
 
-        public SKBitmap? GetVideoFrameBitmap(long timeMilliseconds)
+        public SKBitmap? GetVideoFrameBitmap(TimeSpan time)
         {
-            if (GetVideoFrame(timeMilliseconds) is VideoFrame frame)
+            if (GetVideoFrame(time) is VideoFrame frame)
             {
                 if (_videoFrameBitmap is null)
                 {
@@ -421,34 +485,34 @@ namespace FFmpegVideoRenderer
             return null;
         }
 
-        public AudioSample? GetAudioSample(long timeMilliseconds)
+        public AudioSample? GetAudioSample(TimeSpan time)
         {
             if (_inputAudioStream is null ||
                 _inputAudioDecoder is null)
                 throw new InvalidOperationException("No audio stream");
 
-            if (timeMilliseconds > MillisecondsDuration)
+            if (time > Duration)
             {
                 return null;
             }
 
             if (_currentAudioFrame.HasValue &&
-                timeMilliseconds >= _currentFrameTimeMilliseconds &&
-                GetAudioSampleFromFrame(_currentAudioFrame.Value, _inputAudioDecoder.SampleRate, _inputAudioDecoder.ChLayout.nb_channels, timeMilliseconds - _currentFrameTimeMilliseconds, out var sample))
+                time >= _currentAudioFrameTime &&
+                GetAudioSampleFromFrame(_currentAudioFrame.Value, _inputAudioDecoder.SampleRate, _inputAudioDecoder.ChLayout.nb_channels, time - _currentAudioFrameTime, out var sample))
             {
                 return sample;
             }
 
-            Decode(_inputFormatContext, _inputVideoDecoder, _inputAudioDecoder, AVMediaType.Audio, _inputVideoStream?.Index ?? -1, _inputAudioStream?.Index ?? -1, timeMilliseconds);
+            Decode(_inputFormatContext, _inputVideoDecoder, _inputAudioDecoder, AVMediaType.Audio, _inputVideoStream?.Index ?? -1, _inputAudioStream?.Index ?? -1, time);
 
             if (_currentAudioFrame.HasValue &&
-                timeMilliseconds >= _currentFrameTimeMilliseconds &&
-                GetAudioSampleFromFrame(_currentAudioFrame.Value, _inputAudioDecoder.SampleRate, _inputAudioDecoder.ChLayout.nb_channels, timeMilliseconds - _currentFrameTimeMilliseconds, out sample))
+                time >= _currentAudioFrameTime &&
+                GetAudioSampleFromFrame(_currentAudioFrame.Value, _inputAudioDecoder.SampleRate, _inputAudioDecoder.ChLayout.nb_channels, time - _currentAudioFrameTime, out sample))
             {
                 return sample;
             }
 
-            throw new ArgumentException("Invalid time");
+            return null;
         }
 
         protected virtual void Dispose(bool disposing)

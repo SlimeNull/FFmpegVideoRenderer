@@ -1,4 +1,5 @@
-﻿using Sdcb.FFmpeg.Codecs;
+﻿using System.Runtime.InteropServices;
+using Sdcb.FFmpeg.Codecs;
 using Sdcb.FFmpeg.Formats;
 using Sdcb.FFmpeg.Raw;
 using Sdcb.FFmpeg.Swscales;
@@ -10,7 +11,22 @@ namespace FFmpegVideoRenderer
 {
     public static class Renderer
     {
-        static readonly AVRational Framerate = new AVRational(1, 30);
+        static bool HasMoreAudioSamples(Project project, TimeSpan time)
+        {
+            foreach (var track in project.AudioTracks)
+            {
+                if (track.Children.Any(item => item.AbsoluteEndTime > time))
+                    return true;
+            }
+
+            foreach (var track in project.VideoTracks)
+            {
+                if (track.Children.Any(item => item.AbsoluteEndTime > time))
+                    return true;
+            }
+
+            return false;
+        }
 
         static bool HasMoreVideoFrames(Project project, TimeSpan time)
         {
@@ -23,7 +39,7 @@ namespace FFmpegVideoRenderer
             return false;
         }
 
-        static TimeSpan GetMediaSourceFrameTime(TrackItem trackItem, TimeSpan globalTime)
+        static TimeSpan GetMediaSourceRelatedTime(TrackItem trackItem, TimeSpan globalTime)
         {
             return globalTime - trackItem.Offset + trackItem.StartTime;
         }
@@ -35,6 +51,10 @@ namespace FFmpegVideoRenderer
 
         public static unsafe void Render(Project project, Stream outputStream, IProgress<RenderProgress>? progress)
         {
+            AVRational outputFrameRate = new AVRational(1, 30);
+            AVRational outputSampleRate = new AVRational(1, 44100);
+            int outputAudioFrameSize = 1024;
+
             Dictionary<string, MediaSource> _audioMediaSources = new();
             Dictionary<string, MediaSource> _videoMediaSources = new();
 
@@ -53,29 +73,29 @@ namespace FFmpegVideoRenderer
             // prepare rendering
             using FormatContext formatContext = FormatContext.AllocOutput(formatName: "mp4");
             formatContext.VideoCodec = Codec.CommonEncoders.Libx264;
-            formatContext.AudioCodec = Codec.CommonEncoders.Libmp3lame;
+            formatContext.AudioCodec = Codec.CommonEncoders.AAC;
 
             using CodecContext videoEncoder = new CodecContext(formatContext.VideoCodec)
             {
                 Width = project.OutputWidth,
                 Height = project.OutputHeight,
-                Framerate = Framerate,
-                TimeBase = Framerate,
+                Framerate = outputFrameRate,
+                TimeBase = outputFrameRate,
                 PixelFormat = AVPixelFormat.Yuv420p,
                 Flags = AV_CODEC_FLAG.GlobalHeader,
             };
 
             AVChannelLayout avChannelLayout = default;
-            ffmpeg.av_channel_layout_default(&avChannelLayout, 1);
+            ffmpeg.av_channel_layout_default(&avChannelLayout, 2);
 
             using CodecContext audioEncoder = new CodecContext(formatContext.AudioCodec)
             {
-                BitRate = 320000,
-                SampleFormat = AVSampleFormat.Flt,
+                BitRate = 1270000,
+                SampleFormat = AVSampleFormat.Fltp,
                 SampleRate = 44100,
                 ChLayout = avChannelLayout,
                 CodecType = AVMediaType.Audio,
-                FrameSize = 1024,
+                FrameSize = outputAudioFrameSize,
                 TimeBase = new AVRational(1, 44100)
             };
 
@@ -109,12 +129,115 @@ namespace FFmpegVideoRenderer
             using var packetRef = new Packet();
             List<TrackItem> trackItemsToRender = new();
 
+
+            float[] sampleFrameBuffer = new float[outputAudioFrameSize];
+
+
+            // audio encoding
+            long sampleIndex = 0;
+            while (true)
+            {
+                var framePts = sampleIndex;
+                var frameTime = TimeSpan.FromSeconds((double)sampleIndex * outputSampleRate.Num / outputSampleRate.Den);
+                if (!HasMoreAudioSamples(project, frameTime))
+                {
+                    break;
+                }
+
+                var frame = new Frame();
+                frame.Format = (int)AVSampleFormat.Fltp;
+                frame.NbSamples = audioEncoder.FrameSize;
+                frame.ChLayout = audioEncoder.ChLayout;
+                frame.SampleRate = audioEncoder.SampleRate;
+
+                fixed (float* samplePtr = sampleFrameBuffer)
+                {
+                    // clear the buffer
+                    NativeMemory.Clear(samplePtr, (nuint)(sizeof(float) * outputAudioFrameSize));
+
+                    var half = frame.NbSamples / 2;
+                    for (int i = 0; i < half; i++)
+                    {
+                        var time = TimeSpan.FromSeconds((double)sampleIndex * outputSampleRate.Num / outputSampleRate.Den);
+                        if (!HasMoreAudioSamples(project, time))
+                        {
+                            break;
+                        }
+
+                        float sampleLeft = 0;
+                        float sampleRight = 0;
+
+                        foreach (var track in project.AudioTracks)
+                        {
+                            foreach (var trackItem in track.Children)
+                            {
+                                if (!trackItem.IsTimeInRange(time))
+                                {
+                                    continue;
+                                }
+
+                                if (_audioMediaSources.TryGetValue(trackItem.ResourceId, out var mediaSource) &&
+                                    mediaSource.HasAudio)
+                                {
+                                    var sampleTime = GetMediaSourceRelatedTime(trackItem, time);
+                                    if (mediaSource.GetAudioSample(sampleTime) is AudioSample sample)
+                                    {
+                                        sampleLeft += sample.LeftValue;
+                                        sampleRight += sample.RightValue;
+                                    }
+                                }
+                            }
+                        }
+
+                        foreach (var track in project.VideoTracks)
+                        {
+                            foreach (var trackItem in track.Children)
+                            {
+                                if (!trackItem.IsTimeInRange(time))
+                                {
+                                    continue;
+                                }
+
+                                if (_videoMediaSources.TryGetValue(trackItem.ResourceId, out var mediaSource) &&
+                                    mediaSource.HasAudio)
+                                {
+                                    var sampleTime = GetMediaSourceRelatedTime(trackItem, time);
+                                    if (mediaSource.GetAudioSample(sampleTime) is AudioSample sample)
+                                    {
+                                        sampleLeft += sample.LeftValue;
+                                        sampleRight += sample.RightValue;
+                                    }
+                                }
+                            }
+                        }
+
+                        samplePtr[i] = sampleLeft;
+                        samplePtr[half + i] = sampleRight;
+
+                        sampleIndex++;
+                        sampleIndex++;
+                    }
+
+                    frame.Data[0] = (nint)(void*)(samplePtr);
+                    frame.Data[1] = (nint)(void*)(samplePtr);
+                    frame.Pts = framePts;
+
+                    foreach (var packet in audioEncoder.EncodeFrame(frame, packetRef))
+                    {
+                        packet.RescaleTimestamp(audioEncoder.TimeBase, audioStream.TimeBase);
+                        packet.StreamIndex = audioStream.Index;
+
+                        formatContext.WritePacket(packet);
+                    }
+                }
+            }
+
             // video encoding
             #region Video Encoding
             long frameIndex = 0;
             while (true)
             {
-                var time = TimeSpan.FromSeconds((double)frameIndex * Framerate.Num / Framerate.Den);
+                var time = TimeSpan.FromSeconds((double)frameIndex * outputFrameRate.Num / outputFrameRate.Den);
                 if (!HasMoreVideoFrames(project, time))
                 {
                     break;
@@ -136,7 +259,7 @@ namespace FFmpegVideoRenderer
                         var trackItem = trackItemsToRender[0];
                         if (_videoMediaSources.TryGetValue(trackItem.ResourceId, out var mediaSource))
                         {
-                            var frameTime = (long)GetMediaSourceFrameTime(trackItem, time).TotalMilliseconds;
+                            var frameTime = GetMediaSourceRelatedTime(trackItem, time);
                             if (mediaSource.GetVideoFrameBitmap(frameTime) is SKBitmap frameBitmap)
                             {
                                 var dest = LayoutVideoTrackItem(project, trackItem);
@@ -153,8 +276,8 @@ namespace FFmpegVideoRenderer
                             _videoMediaSources.TryGetValue(trackItem2.ResourceId, out var mediaSource2) &&
                             TrackItem.GetIntersectionRate(ref trackItem1, ref trackItem2, time, out var rate))
                         {
-                            var relativeTime1 = (long)GetMediaSourceFrameTime(trackItem1, time).TotalMilliseconds;
-                            var relativeTime2 = (long)GetMediaSourceFrameTime(trackItem2, time).TotalMilliseconds;
+                            var relativeTime1 = GetMediaSourceRelatedTime(trackItem1, time);
+                            var relativeTime2 = GetMediaSourceRelatedTime(trackItem2, time);
 
                             if (mediaSource1.GetVideoFrameBitmap(relativeTime1) is SKBitmap frameBitmap1 &&
                                 mediaSource2.GetVideoFrameBitmap(relativeTime2) is SKBitmap frameBitmap2)
@@ -179,7 +302,7 @@ namespace FFmpegVideoRenderer
                             for (int j = 2; j < trackItemsToRender.Count; j++)
                             {
                                 var trackItemOther = trackItemsToRender[j];
-                                var relativeTimeOther = (long)((time - trackItemOther.Offset).TotalMilliseconds);
+                                var relativeTimeOther = GetMediaSourceRelatedTime(trackItemOther, time);
 
                                 if (_videoMediaSources.TryGetValue(trackItemOther.ResourceId, out var mediaSourceOther) &&
                                     mediaSourceOther.GetVideoFrameBitmap(relativeTimeOther) is SKBitmap frameBitmapOther)

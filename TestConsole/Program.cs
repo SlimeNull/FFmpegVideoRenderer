@@ -1,4 +1,5 @@
 ﻿using System.Diagnostics;
+using System.Runtime.InteropServices;
 using FFmpegVideoRenderer;
 using SkiaSharp;
 using Spectre.Console;
@@ -9,7 +10,7 @@ using Spectre.Console;
 //MediaSource mediaSource = new MediaSource(mediaStream);
 
 //using var bitmap = new SKBitmap(mediaSource.VideoFrameWidth, mediaSource.VideoFrameHeight, SKColorType.Bgra8888, SKAlphaType.Unpremul);
-////var stopwatch = Stopwatch.StartNew();
+//var stopwatch = Stopwatch.StartNew();
 
 //int i = 0;
 //while (true)
@@ -19,14 +20,15 @@ using Spectre.Console;
 //    if (i < 0)
 //        i = 0;
 
-//    var frame = mediaSource.GetVideoFrame(i);
+//    if ( mediaSource.GetVideoFrame(stopwatch.Elapsed) is VideoFrame frame)
+//    {
+//        frame.FillBitmap(bitmap);
 
-//    //frame.FillBitmap(bitmap);
 
-
-//    //var canvasImage = new CanvasImage(bitmap.Encode(SKEncodedImageFormat.Jpeg, 100).AsSpan());
-//    //Console.SetCursorPosition(0, 0);
-//    //AnsiConsole.Write(canvasImage);
+//        var canvasImage = new CanvasImage(bitmap.Encode(SKEncodedImageFormat.Jpeg, 100).AsSpan());
+//        Console.SetCursorPosition(0, 0);
+//        AnsiConsole.Write(canvasImage);
+//    }
 //}
 
 
@@ -35,44 +37,76 @@ using Spectre.Console;
 
 #endregion
 
-using var video1 = File.OpenRead(@"E:\CloudMusic\MV\Erdenebat Baatar,Lkhamragchaa Lkhagvasuren,Altanjargal - Goyo (feat. Lkhamragchaa Lkhagvasuren, Altanjargal, Erdenechimeg G, Narandulam, Dashnyam & Uul Us).mp4");
-using var video2 = File.OpenRead(@"E:\CloudMusic\MV\ナナツカゼ,PIKASONIC,なこたんまる - 春めく.mp4");
-using var output = File.Create("output.mp4");
+#region Test Rendering
+//using var video1 = File.OpenRead(@"E:\CloudMusic\MV\Erdenebat Baatar,Lkhamragchaa Lkhagvasuren,Altanjargal - Goyo (feat. Lkhamragchaa Lkhagvasuren, Altanjargal, Erdenechimeg G, Narandulam, Dashnyam & Uul Us).mp4");
+//using var video2 = File.OpenRead(@"E:\CloudMusic\MV\ナナツカゼ,PIKASONIC,なこたんまる - 春めく.mp4");
+//using var output = File.Create("output.mp4");
 
-var project = new Project()
+//var project = new Project()
+//{
+//    OutputWidth = 800,
+//    OutputHeight = 600,
+//    VideoResources =
+//    {
+//        new ProjectResource("1", video1),
+//        new ProjectResource("2", video2),
+//    },
+//    VideoTracks =
+//    {
+//        new Track()
+//        {
+//            Children =
+//            {
+//                new TrackItem()
+//                {
+//                    ResourceId = "1",
+//                    Offset = TimeSpan.FromSeconds(0),
+//                    StartTime = TimeSpan.FromSeconds(0),
+//                    EndTime = TimeSpan.FromSeconds(6),
+//                },
+//                //new TrackItem()
+//                //{
+//                //    ResourceId = "2",
+//                //    Offset = TimeSpan.FromSeconds(4),
+//                //    StartTime = TimeSpan.FromSeconds(0),
+//                //    EndTime = TimeSpan.FromSeconds(10),
+//                //}
+//            }
+//        }
+//    }
+//};
+
+//Renderer.Render(project, output, null);
+#endregion
+
+
+using var audioToDecode =
+    File.OpenRead(@"E:\CloudMusic\MV\ナナツカゼ,PIKASONIC,なこたんまる - 春めく.mp4");
+using var audioSourceToDecode = new MediaSource(audioToDecode);
+var pcm = new List<float>();
+
+for (int i = 0; i < 30; i++)
 {
-    OutputWidth = 800,
-    OutputHeight = 600,
-    VideoResources =
+    for (int j = 0; j < 44100; j++)
     {
-        new ProjectResource("1", video1),
-        new ProjectResource("2", video2),
-    },
-    VideoTracks =
-    {
-        new Track()
+        var time = TimeSpan.FromSeconds(i + j / (44100.0));
+        if (audioSourceToDecode.GetAudioSample(time) is AudioSample sample)
         {
-            Children =
-            {
-                new TrackItem()
-                {
-                    ResourceId = "1",
-                    Offset = TimeSpan.FromSeconds(0),
-                    StartTime = TimeSpan.FromSeconds(0),
-                    EndTime = TimeSpan.FromSeconds(6),
-                },
-                new TrackItem()
-                {
-                    ResourceId = "2",
-                    Offset = TimeSpan.FromSeconds(4),
-                    StartTime = TimeSpan.FromSeconds(0),
-                    EndTime = TimeSpan.FromSeconds(6),
-                }
-            }
+            pcm.Add(sample.LeftValue);
+            pcm.Add(sample.RightValue);
+        }
+        else
+        {
+            pcm.Add(0);
+            pcm.Add(0);
         }
     }
-};
+}
 
-Renderer.Render(project, output, null);
+var pcmArray = pcm.ToArray();
+var pcmSpan = pcmArray.AsSpan();
+var pcmByteSpan = MemoryMarshal.AsBytes(pcmSpan);
+
+File.WriteAllBytes("output.pcm", pcmByteSpan.ToArray());
 
 Console.WriteLine("OK");
