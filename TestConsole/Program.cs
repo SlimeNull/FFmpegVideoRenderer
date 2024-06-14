@@ -37,78 +37,113 @@ using Spectre.Console;
 
 #endregion
 
+var fff = new { };
+
 #region Test Rendering
-//using var video1 = File.OpenRead(@"E:\CloudMusic\MV\Erdenebat Baatar,Lkhamragchaa Lkhagvasuren,Altanjargal - Goyo (feat. Lkhamragchaa Lkhagvasuren, Altanjargal, Erdenechimeg G, Narandulam, Dashnyam & Uul Us).mp4");
-//using var video2 = File.OpenRead(@"E:\CloudMusic\MV\ナナツカゼ,PIKASONIC,なこたんまる - 春めく.mp4");
-//using var output = File.Create("output.mp4");
+using var video1 = File.OpenRead(@"E:\CloudMusic\MV\Erdenebat Baatar,Lkhamragchaa Lkhagvasuren,Altanjargal - Goyo (feat. Lkhamragchaa Lkhagvasuren, Altanjargal, Erdenechimeg G, Narandulam, Dashnyam & Uul Us).mp4");
+using var video2 = File.OpenRead(@"E:\CloudMusic\MV\ナナツカゼ,PIKASONIC,なこたんまる - 春めく.mp4");
+using var audio1 = File.OpenRead(@"E:\CloudMusic\KSHMR,Mark Sixma - Gladiator (Remix).mp3");
+using var image = File.OpenRead(@"C:\Users\SlimeNull\OneDrive\Pictures\Desktop\2ed7cfb8882411ebb6edd017c2d2eca2.png");
+using var output = File.Create("output.mp4");
 
-//var project = new Project()
-//{
-//    OutputWidth = 800,
-//    OutputHeight = 600,
-//    VideoResources =
-//    {
-//        new ProjectResource("1", video1),
-//        new ProjectResource("2", video2),
-//    },
-//    VideoTracks =
-//    {
-//        new Track()
-//        {
-//            Children =
-//            {
-//                new TrackItem()
-//                {
-//                    ResourceId = "1",
-//                    Offset = TimeSpan.FromSeconds(0),
-//                    StartTime = TimeSpan.FromSeconds(0),
-//                    EndTime = TimeSpan.FromSeconds(6),
-//                },
-//                //new TrackItem()
-//                //{
-//                //    ResourceId = "2",
-//                //    Offset = TimeSpan.FromSeconds(4),
-//                //    StartTime = TimeSpan.FromSeconds(0),
-//                //    EndTime = TimeSpan.FromSeconds(10),
-//                //}
-//            }
-//        }
-//    }
-//};
+var project = new Project()
+{
+    OutputWidth = 800,
+    OutputHeight = 600,
+    Resources =
+    {
+        new ProjectResource("1", video1),
+        new ProjectResource("2", video2),
+        new ProjectResource("bgm", audio1),
+        new ProjectResource("image", image),
+    },
+    VideoTracks =
+    {
+        new VideoTrack()
+        {
+            Children =
+            {
+                new VideoTrackItem()
+                {
+                    ResourceId = "1",
+                    Offset = TimeSpan.FromSeconds(0),
+                    StartTime = TimeSpan.FromSeconds(0),
+                    EndTime = TimeSpan.FromSeconds(6),
+                    MuteAudio = true,
+                },
+                new VideoTrackItem()
+                {
+                    ResourceId = "2",
+                    Offset = TimeSpan.FromSeconds(4),
+                    StartTime = TimeSpan.FromSeconds(0),
+                    EndTime = TimeSpan.FromSeconds(30),
+                    MuteAudio = true
+                }
+            }
+        },
+        new VideoTrack()
+        {
+            Children =
+            {
+                new VideoTrackItem()
+                {
+                    ResourceId = "image",
+                    StartTime = TimeSpan.FromSeconds(0),
+                    EndTime = TimeSpan.FromSeconds(120)
+                }
+            }
+        }
+    },
+    AudioTracks =
+    {
+        new AudioTrack()
+        {
+            Children =
+            {
+                new AudioTrackItem()
+                {
+                    ResourceId = "bgm",
+                    StartTime = TimeSpan.FromSeconds(70),
+                    EndTime = TimeSpan.FromSeconds(164)
+                }
+            }
+        }
+    }
+};
 
-//Renderer.Render(project, output, null);
+Renderer.Render(project, output, null);
 #endregion
 
 
-using var audioToDecode =
-    File.OpenRead(@"E:\CloudMusic\MV\Erdenebat Baatar,Lkhamragchaa Lkhagvasuren,Altanjargal - Goyo (feat. Lkhamragchaa Lkhagvasuren, Altanjargal, Erdenechimeg G, Narandulam, Dashnyam & Uul Us).mp4");
-using var audioSourceToDecode = new MediaSource(audioToDecode);
-var pcm = new List<float>();
+//using var audioToDecode =
+//    File.OpenRead(@"E:\CloudMusic\MV\Erdenebat Baatar,Lkhamragchaa Lkhagvasuren,Altanjargal - Goyo (feat. Lkhamragchaa Lkhagvasuren, Altanjargal, Erdenechimeg G, Narandulam, Dashnyam & Uul Us).mp4");
+//using var audioSourceToDecode = new MediaSource(audioToDecode);
+//var pcm = new List<float>();
 
-for (int i = 0; i < 60; i++)
-{
-    for (int j = 0; j < 22050; j++)
-    {
-        var time = TimeSpan.FromSeconds(i + j / (22050.0));
-        if (audioSourceToDecode.GetAudioSample(time) is AudioSample sample)
-        {
-            pcm.Add(sample.LeftValue);
-            //pcm.Add(sample.RightValue);
-        }
-        else
-        {
-            pcm.Add(0);
-            //pcm.Add(0);
-        }
-    }
-}
+//for (int i = 0; i < 60; i++)
+//{
+//    for (int j = 0; j < 22050; j++)
+//    {
+//        var time = TimeSpan.FromSeconds(i + j / (22050.0));
+//        if (audioSourceToDecode.GetAudioSample(time) is AudioSample sample)
+//        {
+//            pcm.Add(sample.LeftValue);
+//            //pcm.Add(sample.RightValue);
+//        }
+//        else
+//        {
+//            pcm.Add(0);
+//            //pcm.Add(0);
+//        }
+//    }
+//}
 
-//pcm = MediaSource.s_pcmLeftSamples;
+////pcm = MediaSource.s_pcmLeftSamples;
 
-var pcmArray = pcm.ToArray();
-var pcmSpan = pcmArray.AsSpan();
-var pcmByteSpan = MemoryMarshal.AsBytes(pcmSpan);
+//var pcmArray = pcm.ToArray();
+//var pcmSpan = pcmArray.AsSpan();
+//var pcmByteSpan = MemoryMarshal.AsBytes(pcmSpan);
 
-File.WriteAllBytes("output.pcm", pcmByteSpan.ToArray());
+//File.WriteAllBytes("output.pcm", pcmByteSpan.ToArray());
 
 Console.WriteLine("OK");

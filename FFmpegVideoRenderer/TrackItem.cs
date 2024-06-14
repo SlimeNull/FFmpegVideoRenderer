@@ -1,7 +1,7 @@
 ﻿namespace FFmpegVideoRenderer
 {
 
-    public class TrackItem
+    public abstract record class TrackItem
     {
         public string ResourceId { get; set; } = "SomeResource";
 

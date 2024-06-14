@@ -1,7 +1,7 @@
 ﻿namespace FFmpegVideoRenderer
 {
-    public class Track
+    public class Track<TTrackItem> where TTrackItem : TrackItem
     {
-        public List<TrackItem> Children { get; } = new();
+        public List<TTrackItem> Children { get; } = new();
     }
 }

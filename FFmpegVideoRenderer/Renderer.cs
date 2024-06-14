@@ -44,9 +44,135 @@ namespace FFmpegVideoRenderer
             return globalTime - trackItem.Offset + trackItem.StartTime;
         }
 
-        static SKRect LayoutVideoTrackItem(Project project, TrackItem videoTrackItem)
+        static SKRect LayoutVideoTrackItem(Project project, VideoTrackItem videoTrackItem)
         {
-            return new SKRect(0, 0, project.OutputWidth, project.OutputHeight);
+            if (videoTrackItem.PositionX is 0 &&
+                videoTrackItem.PositionY is 0 &&
+                videoTrackItem.SizeWidth is 0 &&
+                videoTrackItem.SizeHeight is 0)
+            {
+                return new SKRect(0, 0, project.OutputWidth, project.OutputHeight);
+            }
+
+            return new SKRect(videoTrackItem.PositionX, videoTrackItem.PositionY, videoTrackItem.SizeWidth, videoTrackItem.SizeHeight);
+        }
+
+        static void CombineAudioSample(
+            Dictionary<string, MediaSource> mediaSources,
+            List<TrackItem> bufferTrackItemsToRender,
+            AudioTrack track,
+            TimeSpan time,
+            out float sampleLeft,
+            out float sampleRight)
+        {
+            sampleLeft = 0;
+            sampleRight = 0;
+
+            bufferTrackItemsToRender.Clear();
+            foreach (var trackItem in track.Children.Where(trackItem => trackItem.IsTimeInRange(time)))
+            {
+                bufferTrackItemsToRender.Add(trackItem);
+            }
+
+            if (bufferTrackItemsToRender.Count == 1)
+            {
+                var trackItem = bufferTrackItemsToRender[0];
+
+                if (mediaSources.TryGetValue(trackItem.ResourceId, out var mediaSource) &&
+                    mediaSource.HasAudio)
+                {
+                    var relativeTime = GetMediaSourceRelatedTime(trackItem, time);
+                    if (mediaSource.GetAudioSample(relativeTime) is AudioSample sample)
+                    {
+                        sampleLeft += sample.LeftValue;
+                        sampleRight += sample.RightValue;
+                    }
+                }
+            }
+            else if (bufferTrackItemsToRender.Count >= 2)
+            {
+                var trackItem1 = bufferTrackItemsToRender[0];
+                var trackItem2 = bufferTrackItemsToRender[1];
+
+                if (mediaSources.TryGetValue(trackItem1.ResourceId, out var mediaSource1) &&
+                    mediaSources.TryGetValue(trackItem2.ResourceId, out var mediaSource2) &&
+                    mediaSource1.HasAudio &&
+                    mediaSource2.HasAudio &&
+                    TrackItem.GetIntersectionRate(ref trackItem1, ref trackItem2, time, out var rate))
+                {
+                    var relativeTime1 = GetMediaSourceRelatedTime(trackItem1, time);
+                    var relativeTime2 = GetMediaSourceRelatedTime(trackItem2, time);
+
+                    if (mediaSource1.GetAudioSample(relativeTime1) is AudioSample sample1 &&
+                        mediaSource2.GetAudioSample(relativeTime2) is AudioSample sample2)
+                    {
+                        sampleLeft += (float)(sample1.LeftValue * (1 - rate));
+                        sampleRight += (float)(sample2.RightValue * (1 - rate));
+
+                        sampleLeft += (float)(sample2.LeftValue * rate);
+                        sampleRight += (float)(sample2.RightValue * rate);
+                    }
+                }
+            }
+        }
+
+        static void CombineAudioSample(
+            Dictionary<string, MediaSource> mediaSources,
+            List<TrackItem> bufferTrackItemsToRender,
+            VideoTrack track,
+            TimeSpan time,
+            out float sampleLeft,
+            out float sampleRight)
+        {
+            sampleLeft = 0;
+            sampleRight = 0;
+
+            bufferTrackItemsToRender.Clear();
+            foreach (var trackItem in track.Children.Where(trackItem => !trackItem.MuteAudio && trackItem.IsTimeInRange(time)))
+            {
+                bufferTrackItemsToRender.Add(trackItem);
+            }
+
+            if (bufferTrackItemsToRender.Count == 1)
+            {
+                var trackItem = bufferTrackItemsToRender[0];
+
+                if (mediaSources.TryGetValue(trackItem.ResourceId, out var mediaSource) &&
+                    mediaSource.HasAudio)
+                {
+                    var relativeTime = GetMediaSourceRelatedTime(trackItem, time);
+                    if (mediaSource.GetAudioSample(relativeTime) is AudioSample sample)
+                    {
+                        sampleLeft += sample.LeftValue;
+                        sampleRight += sample.RightValue;
+                    }
+                }
+            }
+            else if (bufferTrackItemsToRender.Count >= 2)
+            {
+                var trackItem1 = bufferTrackItemsToRender[0];
+                var trackItem2 = bufferTrackItemsToRender[1];
+
+                if (mediaSources.TryGetValue(trackItem1.ResourceId, out var mediaSource1) &&
+                    mediaSources.TryGetValue(trackItem2.ResourceId, out var mediaSource2) &&
+                    mediaSource1.HasAudio &&
+                    mediaSource2.HasAudio &&
+                    TrackItem.GetIntersectionRate(ref trackItem1, ref trackItem2, time, out var rate))
+                {
+                    var relativeTime1 = GetMediaSourceRelatedTime(trackItem1, time);
+                    var relativeTime2 = GetMediaSourceRelatedTime(trackItem2, time);
+
+                    if (mediaSource1.GetAudioSample(relativeTime1) is AudioSample sample1 &&
+                        mediaSource2.GetAudioSample(relativeTime2) is AudioSample sample2)
+                    {
+                        sampleLeft += (float)(sample1.LeftValue * (1 - rate));
+                        sampleRight += (float)(sample2.RightValue * (1 - rate));
+
+                        sampleLeft += (float)(sample2.LeftValue * rate);
+                        sampleRight += (float)(sample2.RightValue * rate);
+                    }
+                }
+            }
         }
 
         public static unsafe void Render(Project project, Stream outputStream, IProgress<RenderProgress>? progress)
@@ -55,18 +181,12 @@ namespace FFmpegVideoRenderer
             AVRational outputSampleRate = new AVRational(1, 44100);
             int outputAudioFrameSize = 1024;
 
-            Dictionary<string, MediaSource> _audioMediaSources = new();
-            Dictionary<string, MediaSource> _videoMediaSources = new();
+            Dictionary<string, MediaSource> mediaSources = new();
 
             // prepare resources
-            foreach (var audioResource in project.AudioResources)
+            foreach (var resource in project.Resources)
             {
-                _audioMediaSources[audioResource.Id] = new MediaSource(audioResource.SourceStream);
-            }
-
-            foreach (var videoResource in project.VideoResources)
-            {
-                _videoMediaSources[videoResource.Id] = new MediaSource(videoResource.SourceStream);
+                mediaSources[resource.Id] = new MediaSource(resource.SourceStream);
             }
 
 
@@ -130,7 +250,8 @@ namespace FFmpegVideoRenderer
             List<TrackItem> trackItemsToRender = new();
 
 
-            float[] sampleFrameBuffer = new float[outputAudioFrameSize];
+            float[] leftSampleFrameBuffer = new float[outputAudioFrameSize];
+            float[] rightSampleFrameBuffer = new float[outputAudioFrameSize];
 
 
             // audio encoding
@@ -150,86 +271,68 @@ namespace FFmpegVideoRenderer
                 frame.ChLayout = audioEncoder.ChLayout;
                 frame.SampleRate = audioEncoder.SampleRate;
 
-                fixed (float* samplePtr = sampleFrameBuffer)
+                fixed (float* leftSamplePtr = leftSampleFrameBuffer)
                 {
-                    // clear the buffer
-                    NativeMemory.Clear(samplePtr, (nuint)(sizeof(float) * outputAudioFrameSize));
-
-                    var half = frame.NbSamples / 2;
-                    for (int i = 0; i < half; i++)
+                    fixed (float* rightSamplePtr = rightSampleFrameBuffer)
                     {
-                        var time = TimeSpan.FromSeconds((double)sampleIndex * outputSampleRate.Num / outputSampleRate.Den);
-                        if (!HasMoreAudioSamples(project, time))
-                        {
-                            break;
-                        }
+                        // clear the buffer
+                        NativeMemory.Clear(leftSamplePtr, (nuint)(sizeof(float) * outputAudioFrameSize));
 
-                        float sampleLeft = 0;
-                        float sampleRight = 0;
-
-                        foreach (var track in project.AudioTracks)
+                        for (int i = 0; i < frame.NbSamples; i++)
                         {
-                            foreach (var trackItem in track.Children)
+                            var time = TimeSpan.FromSeconds((double)sampleIndex * outputSampleRate.Num / outputSampleRate.Den);
+                            if (!HasMoreAudioSamples(project, time))
                             {
-                                if (!trackItem.IsTimeInRange(time))
-                                {
-                                    continue;
-                                }
-
-                                if (_audioMediaSources.TryGetValue(trackItem.ResourceId, out var mediaSource) &&
-                                    mediaSource.HasAudio)
-                                {
-                                    var sampleTime = GetMediaSourceRelatedTime(trackItem, time);
-                                    if (mediaSource.GetAudioSample(sampleTime) is AudioSample sample)
-                                    {
-                                        sampleLeft += sample.LeftValue;
-                                        sampleRight += sample.RightValue;
-                                    }
-                                }
+                                break;
                             }
-                        }
 
-                        foreach (var track in project.VideoTracks)
-                        {
-                            foreach (var trackItem in track.Children)
+                            float sampleLeft = 0;
+                            float sampleRight = 0;
+
+                            // audio track
+                            foreach (var track in project.AudioTracks)
                             {
-                                if (!trackItem.IsTimeInRange(time))
-                                {
-                                    continue;
-                                }
-
-                                if (_videoMediaSources.TryGetValue(trackItem.ResourceId, out var mediaSource) &&
-                                    mediaSource.HasAudio)
-                                {
-                                    var sampleTime = GetMediaSourceRelatedTime(trackItem, time);
-                                    if (mediaSource.GetAudioSample(sampleTime) is AudioSample sample)
-                                    {
-                                        sampleLeft += sample.LeftValue;
-                                        sampleRight += sample.RightValue;
-                                    }
-                                }
+                                CombineAudioSample(mediaSources, trackItemsToRender, track, time, out var trackSampleLeft, out var trackSampleRight);
+                                sampleLeft += trackSampleLeft;
+                                sampleRight += trackSampleRight;
                             }
+
+                            // video track
+                            foreach (var track in project.VideoTracks)
+                            {
+                                CombineAudioSample(mediaSources, trackItemsToRender, track, time, out var trackSampleLeft, out var trackSampleRight);
+                                sampleLeft += trackSampleLeft;
+                                sampleRight += trackSampleRight;
+                            }
+
+                            leftSamplePtr[i] = sampleLeft;
+                            rightSamplePtr[i] = sampleRight;
+
+                            sampleIndex++;
                         }
 
-                        samplePtr[i] = sampleLeft;
-                        samplePtr[half + i] = sampleRight;
+                        frame.Data[0] = (nint)(void*)(leftSamplePtr);
+                        frame.Data[1] = (nint)(void*)(rightSamplePtr);
+                        frame.Pts = framePts;
 
-                        sampleIndex++;
-                        sampleIndex++;
-                    }
+                        foreach (var packet in audioEncoder.EncodeFrame(frame, packetRef))
+                        {
+                            packet.RescaleTimestamp(audioEncoder.TimeBase, audioStream.TimeBase);
+                            packet.StreamIndex = audioStream.Index;
 
-                    frame.Data[0] = (nint)(void*)(samplePtr);
-                    frame.Data[1] = (nint)(void*)(samplePtr);
-                    frame.Pts = framePts;
-
-                    foreach (var packet in audioEncoder.EncodeFrame(frame, packetRef))
-                    {
-                        packet.RescaleTimestamp(audioEncoder.TimeBase, audioStream.TimeBase);
-                        packet.StreamIndex = audioStream.Index;
-
-                        formatContext.WritePacket(packet);
+                            formatContext.WritePacket(packet);
+                        }
                     }
                 }
+            }
+
+            foreach (var packet in audioEncoder.EncodeFrame(null, packetRef))
+            {
+                packet.RescaleTimestamp(audioEncoder.TimeBase, audioStream.TimeBase);
+                packet.StreamIndex = audioStream.Index;
+
+
+                formatContext.WritePacket(packet);
             }
 
             // video encoding
@@ -246,7 +349,7 @@ namespace FFmpegVideoRenderer
                 canvas.Clear();
 
                 // 从下网上绘制
-                foreach (var track in project.VideoTracks.Reverse<Track>())
+                foreach (var track in project.VideoTracks.Reverse<VideoTrack>())
                 {
                     trackItemsToRender.Clear();
                     foreach (var trackItem in track.Children.Where(trackItem => trackItem.IsTimeInRange(time)))
@@ -257,12 +360,12 @@ namespace FFmpegVideoRenderer
                     if (trackItemsToRender.Count == 1)
                     {
                         var trackItem = trackItemsToRender[0];
-                        if (_videoMediaSources.TryGetValue(trackItem.ResourceId, out var mediaSource))
+                        if (mediaSources.TryGetValue(trackItem.ResourceId, out var mediaSource))
                         {
                             var frameTime = GetMediaSourceRelatedTime(trackItem, time);
                             if (mediaSource.GetVideoFrameBitmap(frameTime) is SKBitmap frameBitmap)
                             {
-                                var dest = LayoutVideoTrackItem(project, trackItem);
+                                var dest = LayoutVideoTrackItem(project, (VideoTrackItem)trackItem);
                                 canvas.DrawBitmap(frameBitmap, dest);
                             }
                         }
@@ -272,8 +375,10 @@ namespace FFmpegVideoRenderer
                         var trackItem1 = trackItemsToRender[0];
                         var trackItem2 = trackItemsToRender[1];
 
-                        if (_videoMediaSources.TryGetValue(trackItem1.ResourceId, out var mediaSource1) &&
-                            _videoMediaSources.TryGetValue(trackItem2.ResourceId, out var mediaSource2) &&
+                        if (mediaSources.TryGetValue(trackItem1.ResourceId, out var mediaSource1) &&
+                            mediaSources.TryGetValue(trackItem2.ResourceId, out var mediaSource2) &&
+                            mediaSource1.HasVideo && 
+                            mediaSource2.HasVideo &&
                             TrackItem.GetIntersectionRate(ref trackItem1, ref trackItem2, time, out var rate))
                         {
                             var relativeTime1 = GetMediaSourceRelatedTime(trackItem1, time);
@@ -282,8 +387,8 @@ namespace FFmpegVideoRenderer
                             if (mediaSource1.GetVideoFrameBitmap(relativeTime1) is SKBitmap frameBitmap1 &&
                                 mediaSource2.GetVideoFrameBitmap(relativeTime2) is SKBitmap frameBitmap2)
                             {
-                                var dest1 = LayoutVideoTrackItem(project, trackItem1);
-                                var dest2 = LayoutVideoTrackItem(project, trackItem2);
+                                var dest1 = LayoutVideoTrackItem(project, (VideoTrackItem)trackItem1);
+                                var dest2 = LayoutVideoTrackItem(project, (VideoTrackItem)trackItem2);
 
                                 using var paint1 = new SKPaint()
                                 {
@@ -299,21 +404,18 @@ namespace FFmpegVideoRenderer
                                 canvas.DrawBitmap(frameBitmap2, dest2, paint2);
                             }
 
-                            for (int j = 2; j < trackItemsToRender.Count; j++)
-                            {
-                                var trackItemOther = trackItemsToRender[j];
-                                var relativeTimeOther = GetMediaSourceRelatedTime(trackItemOther, time);
+                            // ignore other track items
+                            //for (int j = 2; j < trackItemsToRender.Count; j++)
+                            //{
+                            //    var trackItemOther = trackItemsToRender[j];
+                            //    var relativeTimeOther = GetMediaSourceRelatedTime(trackItemOther, time);
 
-                                if (_videoMediaSources.TryGetValue(trackItemOther.ResourceId, out var mediaSourceOther) &&
-                                    mediaSourceOther.GetVideoFrameBitmap(relativeTimeOther) is SKBitmap frameBitmapOther)
-                                {
+                            //    if (_mediaSources.TryGetValue(trackItemOther.ResourceId, out var mediaSourceOther) &&
+                            //        mediaSourceOther.GetVideoFrameBitmap(relativeTimeOther) is SKBitmap frameBitmapOther)
+                            //    {
 
-                                }
-                            }
-                        }
-                        else
-                        {
-
+                            //    }
+                            //}
                         }
                     }
                 }

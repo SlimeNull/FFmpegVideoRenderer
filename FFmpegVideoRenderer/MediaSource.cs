@@ -96,9 +96,17 @@ namespace FFmpegVideoRenderer
 
             if (_inputVideoStream is not null)
             {
-                var videoDuration = TimeSpan.FromSeconds((double)_inputVideoStream.Value.Duration * _inputVideoStream.Value.TimeBase.Num / _inputVideoStream.Value.TimeBase.Den);
-                if (videoDuration > duration)
-                    duration = videoDuration;
+                // image or video
+                if (_inputVideoStream.Value.Duration < 0)
+                {
+                    duration = TimeSpan.Zero;
+                }
+                else
+                {
+                    var videoDuration = TimeSpan.FromSeconds((double)_inputVideoStream.Value.Duration * _inputVideoStream.Value.TimeBase.Num / _inputVideoStream.Value.TimeBase.Den);
+                    if (videoDuration > duration)
+                        duration = videoDuration;
+                }
             }
 
             if (_inputAudioStream is not null)
@@ -163,13 +171,14 @@ namespace FFmpegVideoRenderer
         unsafe AudioFrame CreateAudioSamples(Frame originAudioFrame, ArrayPool<AudioSample> arrayPool, int sampleCount)
         {
             var channels = originAudioFrame.ChLayout.nb_channels;
-            var resultSampleCount = originAudioFrame.NbSamples;
-            var samples = arrayPool.Rent(resultSampleCount);
 
             switch ((AVSampleFormat)originAudioFrame.Format)
             {
                 case AVSampleFormat.Flt:
                 {
+                    var resultSampleCount = originAudioFrame.NbSamples / channels;
+                    var samples = arrayPool.Rent(resultSampleCount);
+
                     var dataPtr = (float*)originAudioFrame.Data[0];
                     for (int dataIndex = 0, resultIndex = 0; dataIndex < sampleCount; dataIndex += channels, resultIndex++)
                     {
@@ -180,11 +189,14 @@ namespace FFmpegVideoRenderer
                         };
                     }
 
-                    break;
+                    return new AudioFrame(samples, resultSampleCount);
                 }
 
                 case AVSampleFormat.S16:
                 {
+                    var resultSampleCount = originAudioFrame.NbSamples / channels;
+                    var samples = arrayPool.Rent(resultSampleCount);
+
                     var dataPtr = (short*)originAudioFrame.Data[0];
                     for (int dataIndex = 0, resultIndex = 0; dataIndex < sampleCount; dataIndex += channels, resultIndex++)
                     {
@@ -195,11 +207,14 @@ namespace FFmpegVideoRenderer
                         };
                     }
 
-                    break;
+                    return new AudioFrame(samples, resultSampleCount);
                 }
 
                 case AVSampleFormat.S32:
                 {
+                    var resultSampleCount = originAudioFrame.NbSamples / channels;
+                    var samples = arrayPool.Rent(resultSampleCount);
+
                     var dataPtr = (int*)originAudioFrame.Data[0];
                     for (int dataIndex = 0, resultIndex = 0; dataIndex < sampleCount; dataIndex += channels, resultIndex++)
                     {
@@ -210,11 +225,14 @@ namespace FFmpegVideoRenderer
                         };
                     }
 
-                    break;
+                    return new AudioFrame(samples, resultSampleCount);
                 }
 
                 case AVSampleFormat.Fltp:
                 {
+                    var resultSampleCount = originAudioFrame.NbSamples;
+                    var samples = arrayPool.Rent(resultSampleCount);
+
                     var leftDataPtr = (float*)originAudioFrame.Data[0];
                     var rightDataPtr = (float*)originAudioFrame.Data[1];
                     //var sampleCountPerPlane = frameSampleCount / channels;
@@ -228,11 +246,53 @@ namespace FFmpegVideoRenderer
                         };
                     }
 
-                    break;
+                    return new AudioFrame(samples, resultSampleCount);
+                }
+
+                case AVSampleFormat.S16p:
+                {
+                    var resultSampleCount = originAudioFrame.NbSamples;
+                    var samples = arrayPool.Rent(resultSampleCount);
+
+                    var leftDataPtr = (short*)originAudioFrame.Data[0];
+                    var rightDataPtr = (short*)originAudioFrame.Data[1];
+                    //var sampleCountPerPlane = frameSampleCount / channels;
+
+                    for (int dataIndex = 0, resultIndex = 0; dataIndex < sampleCount; dataIndex++, resultIndex++)
+                    {
+                        samples[resultIndex] = new AudioSample()
+                        {
+                            LeftValue = leftDataPtr[dataIndex] / (float)short.MaxValue,
+                            RightValue = rightDataPtr[dataIndex] / (float)short.MaxValue,
+                        };
+                    }
+
+                    return new AudioFrame(samples, resultSampleCount);
+                }
+
+                case AVSampleFormat.S32p:
+                {
+                    var resultSampleCount = originAudioFrame.NbSamples;
+                    var samples = arrayPool.Rent(resultSampleCount);
+
+                    var leftDataPtr = (int*)originAudioFrame.Data[0];
+                    var rightDataPtr = (int*)originAudioFrame.Data[1];
+                    //var sampleCountPerPlane = frameSampleCount / channels;
+
+                    for (int dataIndex = 0, resultIndex = 0; dataIndex < sampleCount; dataIndex++, resultIndex++)
+                    {
+                        samples[resultIndex] = new AudioSample()
+                        {
+                            LeftValue = leftDataPtr[dataIndex] / (float)int.MaxValue,
+                            RightValue = rightDataPtr[dataIndex] / (float)int.MaxValue,
+                        };
+                    }
+
+                    return new AudioFrame(samples, resultSampleCount);
                 }
             }
 
-            return new AudioFrame(samples, resultSampleCount);
+            throw new NotSupportedException();
         }
 
         long GetTimestampFromTime(TimeSpan milliseconds, AVRational timeBase)
@@ -284,7 +344,6 @@ namespace FFmpegVideoRenderer
                         time > _currentVideoFrameTime + TimeSpanToSeek ||
                         !_currentVideoFrame.HasValue)
                     {
-                        Console.WriteLine("MediaSource Seek");
 
                         if (videoDecoder is not null)
                         {
@@ -314,7 +373,6 @@ namespace FFmpegVideoRenderer
                         time > _currentAudioFrameTime + TimeSpanToSeek ||
                         !_currentAudioFrame.HasValue)
                     {
-                        Console.WriteLine("MediaSource Seek");
                         if (audioDecoder is not null)
                         {
                             var audioTimestamp = GetTimestampFromTime(time, _inputAudioStream!.Value.TimeBase);
@@ -375,8 +433,6 @@ namespace FFmpegVideoRenderer
                             {
                                 return;
                             }
-
-                            Console.WriteLine("skip one audio frame");
                         }
                     }
 
@@ -449,6 +505,11 @@ namespace FFmpegVideoRenderer
             if (_inputVideoStream is null ||
                 _inputVideoDecoder is null)
                 throw new InvalidOperationException("No video stream");
+
+            if (Duration == default)
+            {
+                time = default;
+            }
 
             if (time > Duration)
             {
