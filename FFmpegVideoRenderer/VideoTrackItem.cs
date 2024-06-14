@@ -8,5 +8,7 @@
         public int SizeHeight { get; set; }
 
         public bool MuteAudio { get; set; }
+
+        public VideoTransition Transition { get; set; }
     }
 }

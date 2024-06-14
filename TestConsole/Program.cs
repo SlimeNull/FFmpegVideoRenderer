@@ -37,13 +37,14 @@ using Spectre.Console;
 
 #endregion
 
+int var = 123;
 var fff = new { };
 
 #region Test Rendering
 using var video1 = File.OpenRead(@"E:\CloudMusic\MV\Erdenebat Baatar,Lkhamragchaa Lkhagvasuren,Altanjargal - Goyo (feat. Lkhamragchaa Lkhagvasuren, Altanjargal, Erdenechimeg G, Narandulam, Dashnyam & Uul Us).mp4");
 using var video2 = File.OpenRead(@"E:\CloudMusic\MV\ナナツカゼ,PIKASONIC,なこたんまる - 春めく.mp4");
 using var audio1 = File.OpenRead(@"E:\CloudMusic\KSHMR,Mark Sixma - Gladiator (Remix).mp3");
-using var image = File.OpenRead(@"C:\Users\SlimeNull\OneDrive\Pictures\Desktop\2ed7cfb8882411ebb6edd017c2d2eca2.png");
+using var image = File.OpenRead(@"C:\Users\SlimeNull\OneDrive\Pictures\Desktop\452ed6a06123465397510ef74da830e1.jpg");
 using var output = File.Create("output.mp4");
 
 var project = new Project()
@@ -89,7 +90,7 @@ var project = new Project()
                 {
                     ResourceId = "image",
                     StartTime = TimeSpan.FromSeconds(0),
-                    EndTime = TimeSpan.FromSeconds(120)
+                    EndTime = TimeSpan.FromSeconds(90)
                 }
             }
         }

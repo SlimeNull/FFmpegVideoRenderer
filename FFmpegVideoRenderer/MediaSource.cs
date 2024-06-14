@@ -144,8 +144,6 @@ namespace FFmpegVideoRenderer
         {
             switch ((AVPixelFormat)originVideoFrame.Format)
             {
-                case AVPixelFormat.Rgba:
-                    return new VideoFrame(originVideoFrame.Width, originVideoFrame.Height, GetDataByteArrayFromFrame(originVideoFrame, arrayPool), originVideoFrame.Linesize[0], 4, SkiaSharp.SKColorType.Rgba8888);
                 case AVPixelFormat.Bgra:
                     return new VideoFrame(originVideoFrame.Width, originVideoFrame.Height, GetDataByteArrayFromFrame(originVideoFrame, arrayPool), originVideoFrame.Linesize[0], 4, SkiaSharp.SKColorType.Bgra8888);
             }
@@ -164,8 +162,9 @@ namespace FFmpegVideoRenderer
             }
 
             _videoFrameConverter.ConvertFrame(originVideoFrame, _convertedVideoFrame);
+            var dataArray = GetDataByteArrayFromFrame(_convertedVideoFrame, arrayPool);
 
-            return new VideoFrame(_convertedVideoFrame.Width, _convertedVideoFrame.Height, GetDataByteArrayFromFrame(_convertedVideoFrame, arrayPool), _convertedVideoFrame.Linesize[0], 4, SkiaSharp.SKColorType.Bgra8888);
+            return new VideoFrame(_convertedVideoFrame.Width, _convertedVideoFrame.Height, dataArray, _convertedVideoFrame.Linesize[0], 4, SkiaSharp.SKColorType.Bgra8888);
         }
 
         unsafe AudioFrame CreateAudioSamples(Frame originAudioFrame, ArrayPool<AudioSample> arrayPool, int sampleCount)

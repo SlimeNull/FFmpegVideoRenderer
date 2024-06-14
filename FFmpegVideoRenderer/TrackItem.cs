@@ -35,7 +35,7 @@
             return time >= Offset && time <= AbsoluteEndTime;
         }
 
-        public static bool GetIntersectionRate(ref TrackItem item1, ref TrackItem item2, TimeSpan time, out double rate)
+        public static bool GetIntersectionRate(ref TrackItem item1, ref TrackItem item2, TimeSpan time, out TimeSpan duration, out double rate)
         {
             if (item1.Offset > item2.Offset)
             {
@@ -46,12 +46,14 @@
                 item1.AbsoluteEndTime > item2.AbsoluteEndTime)
             {
                 rate = default;
+                duration = default;
                 return false;
             }
 
             TimeSpan intersectionStart = item2.Offset;
             TimeSpan intersectionDuration = item1.AbsoluteEndTime - item2.Offset;
 
+            duration = intersectionDuration;
             rate = (time - intersectionStart) / intersectionDuration;
             return true;
         }

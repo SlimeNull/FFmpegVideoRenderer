@@ -9,8 +9,21 @@ using SkiaSharp;
 
 namespace FFmpegVideoRenderer
 {
+
+    public enum VideoTransition
+    {
+        Fade,
+        SlideX
+    }
+
     public static class Renderer
     {
+        static readonly Dictionary<VideoTransition, IVideoTransition> _videoTransitions = new()
+        {
+            [VideoTransition.Fade] = new FadeTransition(),
+            [VideoTransition.SlideX] = new SlideXTransition(),
+        };
+
         static bool HasMoreAudioSamples(Project project, TimeSpan time)
         {
             foreach (var track in project.AudioTracks)
@@ -98,7 +111,7 @@ namespace FFmpegVideoRenderer
                     mediaSources.TryGetValue(trackItem2.ResourceId, out var mediaSource2) &&
                     mediaSource1.HasAudio &&
                     mediaSource2.HasAudio &&
-                    TrackItem.GetIntersectionRate(ref trackItem1, ref trackItem2, time, out var rate))
+                    TrackItem.GetIntersectionRate(ref trackItem1, ref trackItem2, time, out _, out var rate))
                 {
                     var relativeTime1 = GetMediaSourceRelatedTime(trackItem1, time);
                     var relativeTime2 = GetMediaSourceRelatedTime(trackItem2, time);
@@ -157,7 +170,7 @@ namespace FFmpegVideoRenderer
                     mediaSources.TryGetValue(trackItem2.ResourceId, out var mediaSource2) &&
                     mediaSource1.HasAudio &&
                     mediaSource2.HasAudio &&
-                    TrackItem.GetIntersectionRate(ref trackItem1, ref trackItem2, time, out var rate))
+                    TrackItem.GetIntersectionRate(ref trackItem1, ref trackItem2, time, out _, out var rate))
                 {
                     var relativeTime1 = GetMediaSourceRelatedTime(trackItem1, time);
                     var relativeTime2 = GetMediaSourceRelatedTime(trackItem2, time);
@@ -188,7 +201,6 @@ namespace FFmpegVideoRenderer
             {
                 mediaSources[resource.Id] = new MediaSource(resource.SourceStream);
             }
-
 
             // prepare rendering
             using FormatContext formatContext = FormatContext.AllocOutput(formatName: "mp4");
@@ -235,11 +247,13 @@ namespace FFmpegVideoRenderer
             using IOContext ioc = IOContext.WriteStream(outputStream);
             formatContext.Pb = ioc;
 
-            SKBitmap bitmap = new SKBitmap(project.OutputWidth, project.OutputHeight, SKColorType.Rgba8888, SKAlphaType.Opaque);
-            SKCanvas canvas = new SKCanvas(bitmap);
-            SKPaint paint = new SKPaint();
+            using SKBitmap videoBitmap = new SKBitmap(project.OutputWidth, project.OutputHeight, SKColorType.Bgra8888, SKAlphaType.Opaque);
+            using SKCanvas videoCanvas = new SKCanvas(videoBitmap);
 
-            VideoFrameConverter frameConverter = new VideoFrameConverter();
+            using SKBitmap transitionBitmap = new SKBitmap(project.OutputWidth, project.OutputHeight, SKColorType.Bgra8888, SKAlphaType.Opaque);
+            using SKCanvas transitionCanvas = new SKCanvas(transitionBitmap);
+
+            using VideoFrameConverter frameConverter = new VideoFrameConverter();
 
 
             // write header
@@ -300,6 +314,11 @@ namespace FFmpegVideoRenderer
                             // video track
                             foreach (var track in project.VideoTracks)
                             {
+                                if (track.MuteAudio)
+                                {
+                                    continue;
+                                }
+
                                 CombineAudioSample(mediaSources, trackItemsToRender, track, time, out var trackSampleLeft, out var trackSampleRight);
                                 sampleLeft += trackSampleLeft;
                                 sampleRight += trackSampleRight;
@@ -346,9 +365,9 @@ namespace FFmpegVideoRenderer
                     break;
                 }
 
-                canvas.Clear();
+                videoCanvas.Clear();
 
-                // 从下网上绘制
+                // 从下往上绘制
                 foreach (var track in project.VideoTracks.Reverse<VideoTrack>())
                 {
                     trackItemsToRender.Clear();
@@ -366,7 +385,7 @@ namespace FFmpegVideoRenderer
                             if (mediaSource.GetVideoFrameBitmap(frameTime) is SKBitmap frameBitmap)
                             {
                                 var dest = LayoutVideoTrackItem(project, (VideoTrackItem)trackItem);
-                                canvas.DrawBitmap(frameBitmap, dest);
+                                videoCanvas.DrawBitmap(frameBitmap, dest);
                             }
                         }
                     }
@@ -377,9 +396,9 @@ namespace FFmpegVideoRenderer
 
                         if (mediaSources.TryGetValue(trackItem1.ResourceId, out var mediaSource1) &&
                             mediaSources.TryGetValue(trackItem2.ResourceId, out var mediaSource2) &&
-                            mediaSource1.HasVideo && 
+                            mediaSource1.HasVideo &&
                             mediaSource2.HasVideo &&
-                            TrackItem.GetIntersectionRate(ref trackItem1, ref trackItem2, time, out var rate))
+                            TrackItem.GetIntersectionRate(ref trackItem1, ref trackItem2, time, out var transitionDuration, out var transitionRate))
                         {
                             var relativeTime1 = GetMediaSourceRelatedTime(trackItem1, time);
                             var relativeTime2 = GetMediaSourceRelatedTime(trackItem2, time);
@@ -390,18 +409,17 @@ namespace FFmpegVideoRenderer
                                 var dest1 = LayoutVideoTrackItem(project, (VideoTrackItem)trackItem1);
                                 var dest2 = LayoutVideoTrackItem(project, (VideoTrackItem)trackItem2);
 
-                                using var paint1 = new SKPaint()
+                                if (_videoTransitions.TryGetValue(((VideoTrackItem)trackItem1).Transition, out var transition))
                                 {
-                                    Color = new SKColor(255, 255, 255, (byte)(255 - rate * 255)),
-                                };
+                                    transitionCanvas.Clear();
+                                    transition.Render(transitionCanvas, new SKSize(transitionBitmap.Width, transitionBitmap.Height), frameBitmap1, dest1, frameBitmap2, dest2, transitionDuration, (float)transitionRate);
 
-                                using var paint2 = new SKPaint()
+                                    videoCanvas.DrawBitmap(transitionBitmap, default(SKPoint));
+                                }
+                                else
                                 {
-                                    Color = new SKColor(255, 255, 255, (byte)(rate * 255)),
-                                };
-
-                                canvas.DrawBitmap(frameBitmap1, dest1, paint1);
-                                canvas.DrawBitmap(frameBitmap2, dest2, paint2);
+                                    videoCanvas.DrawBitmap(frameBitmap2, dest2);
+                                }
                             }
 
                             // ignore other track items
@@ -425,8 +443,8 @@ namespace FFmpegVideoRenderer
                 frame.Width = project.OutputWidth;
                 frame.Height = project.OutputHeight;
                 frame.Format = (int)AVPixelFormat.Bgra;
-                frame.Data[0] = bitmap.GetPixels();
-                frame.Linesize[0] = bitmap.RowBytes;
+                frame.Data[0] = videoBitmap.GetPixels();
+                frame.Linesize[0] = videoBitmap.RowBytes;
                 frame.Pts = frameIndex;
 
                 using var convertedFrame = videoEncoder.CreateFrame();
