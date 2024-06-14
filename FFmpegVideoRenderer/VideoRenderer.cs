@@ -192,7 +192,7 @@ namespace FFmpegVideoRenderer
             // prepare resources
             foreach (var resource in project.Resources)
             {
-                mediaSources[resource.Id] = new MediaSource(resource.SourceStream);
+                mediaSources[resource.Id] = MediaSource.Create(resource.SourceStream, true);
             }
 
             // prepare rendering

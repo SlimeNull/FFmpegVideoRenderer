@@ -14,7 +14,8 @@ namespace FFmpegVideoRenderer
 {
     public class MediaSource : IDisposable
     {
-        private readonly Stream _stream;
+        private readonly bool _leaveOpen;
+        private readonly Stream _mediaStream;
         private readonly IOContext _inputContext;
         private readonly FormatContext _inputFormatContext;
         private readonly MediaStream? _inputAudioStream;
@@ -39,9 +40,6 @@ namespace FFmpegVideoRenderer
         private Frame? _convertedVideoFrame;
         private SKBitmap? _videoFrameBitmap;
 
-        public int AudioFrameCacheSize { get; set; } = 2000;
-        public int VideoFrameCacheSize { get; set; } = 50;
-
         public TimeSpan TimeSpanToSeek { get; set; } = TimeSpan.FromMilliseconds(1000);
         public TimeSpan Duration { get; }
 
@@ -52,11 +50,16 @@ namespace FFmpegVideoRenderer
         public bool HasAudio => _inputAudioDecoder is not null;
         public bool HasVideo => _inputVideoDecoder is not null;
 
+        public static MediaSource Create(Stream mediaStream)
+            => new MediaSource(mediaStream);
 
-        public MediaSource(Stream stream)
+        public static MediaSource Create(Stream mediaStream, bool leaveOpen)
+            => new MediaSource(mediaStream, leaveOpen);
+
+        private MediaSource(Stream mediaStream)
         {
-            _stream = stream;
-            _inputContext = IOContext.ReadStream(stream);
+            _mediaStream = mediaStream;
+            _inputContext = IOContext.ReadStream(mediaStream);
             _inputFormatContext = FormatContext.OpenInputIO(_inputContext);
 
             _videoDataArrayPool = ArrayPool<byte>.Create(5 * 1024 * 1024, 24);
@@ -117,6 +120,11 @@ namespace FFmpegVideoRenderer
             }
 
             Duration = duration;
+        }
+
+        private MediaSource(Stream mediaStream, bool leaveOpen) : this(mediaStream)
+        {
+            this._leaveOpen = leaveOpen;
         }
 
 
@@ -585,6 +593,10 @@ namespace FFmpegVideoRenderer
                 if (disposing)
                 {
                     // TODO: 释放托管状态(托管对象)
+                    if (!_leaveOpen)
+                    {
+                        _mediaStream.Dispose();
+                    }
 
                     _inputFormatContext.Dispose();
                     _inputVideoDecoder?.Dispose();

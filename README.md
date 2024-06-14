@@ -68,9 +68,19 @@ VideoRenderer.Render(project, output);
 
 ### 视频源
 
-使用 MediaSource 类, 你可以轻松从媒体文件中获取帧数据或者采样.
+使用 MediaSource 类, 你可以轻松从媒体文件中获取帧数据或者采样. 下面是个示例, 它会保存 0-9 秒的十张图片到文件中:
 
 ```csharp
 using var video1 = File.OpenRead(@"E:\CloudMusic\MV\Goyo.mp4");
+using var mediaSource1 = MediaSource.Create(video1);
+for (int i = 0; i < 10; i++)
+{
+    var time = TimeSpan.FromSeconds(i);
+    var saveTo = File.Create($"output{i}.png");
 
+    if (mediaSource1.GetVideoFrameBitmap(time) is SKBitmap bitmap)
+    {
+        bitmap.Encode(saveTo, SKEncodedImageFormat.Png, 0);
+    }
+}
 ```
