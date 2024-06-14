@@ -9,14 +9,7 @@ using SkiaSharp;
 
 namespace FFmpegVideoRenderer
 {
-
-    public enum VideoTransition
-    {
-        Fade,
-        SlideX
-    }
-
-    public static class Renderer
+    public static class VideoRenderer
     {
         static readonly Dictionary<VideoTransition, IVideoTransition> _videoTransitions = new()
         {

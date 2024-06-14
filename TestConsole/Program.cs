@@ -112,7 +112,7 @@ var project = new Project()
     }
 };
 
-Renderer.Render(project, output, null);
+VideoRenderer.Render(project, output, null);
 #endregion
 
 
