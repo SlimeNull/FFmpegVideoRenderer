@@ -2,6 +2,8 @@
 {
     public class Project
     {
+        public string? Name { get; set; }
+
         public List<ProjectResource> Resources { get; } = new();
 
         public List<AudioTrack> AudioTracks { get; } = new();
