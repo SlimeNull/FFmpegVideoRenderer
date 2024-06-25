@@ -41,11 +41,11 @@ int var = 123;
 var fff = new { };
 
 #region Test Rendering
-using var video1 = File.OpenRead(@"E:\CloudMusic\MV\Erdenebat Baatar,Lkhamragchaa Lkhagvasuren,Altanjargal - Goyo (feat. Lkhamragchaa Lkhagvasuren, Altanjargal, Erdenechimeg G, Narandulam, Dashnyam & Uul Us).mp4");
-using var video2 = File.OpenRead(@"E:\CloudMusic\MV\ナナツカゼ,PIKASONIC,なこたんまる - 春めく.mp4");
-using var audio1 = File.OpenRead(@"E:\CloudMusic\KSHMR,Mark Sixma - Gladiator (Remix).mp3");
-using var image = File.OpenRead(@"C:\Users\SlimeNull\OneDrive\Pictures\Desktop\452ed6a06123465397510ef74da830e1.jpg");
-using var output = File.Create("output.mp4");
+var video1 = @"E:\CloudMusic\MV\Erdenebat Baatar,Lkhamragchaa Lkhagvasuren,Altanjargal - Goyo (feat. Lkhamragchaa Lkhagvasuren, Altanjargal, Erdenechimeg G, Narandulam, Dashnyam & Uul Us).mp4";
+var video2 = @"E:\CloudMusic\MV\ナナツカゼ,PIKASONIC,なこたんまる - 春めく.mp4";
+var audio1 = @"E:\CloudMusic\KSHMR,Mark Sixma - Gladiator (Remix).mp3";
+var image = @"C:\Users\SlimeNull\OneDrive\Pictures\Desktop\452ed6a06123465397510ef74da830e1.jpg";
+using var output = new FileStream("output.mp4", FileMode.Create, FileAccess.ReadWrite, FileShare.Read);
 
 var project = new Project()
 {
@@ -53,10 +53,10 @@ var project = new Project()
     OutputHeight = 600,
     Resources =
     {
-        new ProjectResource("1", video1),
-        new ProjectResource("2", video2),
-        new ProjectResource("bgm", audio1),
-        new ProjectResource("image", image),
+        new ProjectResource("1", () => File.OpenRead(video1)),
+        new ProjectResource("2", () => File.OpenRead(video2)),
+        new ProjectResource("bgm", () => File.OpenRead(audio1)),
+        new ProjectResource("image", () => File.OpenRead(image)),
     },
     VideoTracks =
     {

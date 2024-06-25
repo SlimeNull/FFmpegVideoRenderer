@@ -64,7 +64,7 @@ namespace FFmpegVideoRenderer
         }
 
         static void CombineAudioSample(
-            Dictionary<string, MediaSource> mediaSources,
+            Dictionary<TrackItem, MediaSource> mediaSources,
             List<TrackItem> bufferTrackItemsToRender,
             AudioTrack track,
             TimeSpan time,
@@ -84,7 +84,7 @@ namespace FFmpegVideoRenderer
             {
                 var trackItem = bufferTrackItemsToRender[0];
 
-                if (mediaSources.TryGetValue(trackItem.ResourceId, out var mediaSource) &&
+                if (mediaSources.TryGetValue(trackItem, out var mediaSource) &&
                     mediaSource.HasAudio)
                 {
                     var relativeTime = GetMediaSourceRelatedTime(trackItem, time);
@@ -100,8 +100,8 @@ namespace FFmpegVideoRenderer
                 var trackItem1 = bufferTrackItemsToRender[0];
                 var trackItem2 = bufferTrackItemsToRender[1];
 
-                if (mediaSources.TryGetValue(trackItem1.ResourceId, out var mediaSource1) &&
-                    mediaSources.TryGetValue(trackItem2.ResourceId, out var mediaSource2) &&
+                if (mediaSources.TryGetValue(trackItem1, out var mediaSource1) &&
+                    mediaSources.TryGetValue(trackItem2, out var mediaSource2) &&
                     mediaSource1.HasAudio &&
                     mediaSource2.HasAudio &&
                     TrackItem.GetIntersectionRate(ref trackItem1, ref trackItem2, time, out _, out var rate))
@@ -123,7 +123,7 @@ namespace FFmpegVideoRenderer
         }
 
         static void CombineAudioSample(
-            Dictionary<string, MediaSource> mediaSources,
+            Dictionary<TrackItem, MediaSource> mediaSources,
             List<TrackItem> bufferTrackItemsToRender,
             VideoTrack track,
             TimeSpan time,
@@ -143,7 +143,7 @@ namespace FFmpegVideoRenderer
             {
                 var trackItem = bufferTrackItemsToRender[0];
 
-                if (mediaSources.TryGetValue(trackItem.ResourceId, out var mediaSource) &&
+                if (mediaSources.TryGetValue(trackItem, out var mediaSource) &&
                     mediaSource.HasAudio)
                 {
                     var relativeTime = GetMediaSourceRelatedTime(trackItem, time);
@@ -159,8 +159,8 @@ namespace FFmpegVideoRenderer
                 var trackItem1 = bufferTrackItemsToRender[0];
                 var trackItem2 = bufferTrackItemsToRender[1];
 
-                if (mediaSources.TryGetValue(trackItem1.ResourceId, out var mediaSource1) &&
-                    mediaSources.TryGetValue(trackItem2.ResourceId, out var mediaSource2) &&
+                if (mediaSources.TryGetValue(trackItem1, out var mediaSource1) &&
+                    mediaSources.TryGetValue(trackItem2, out var mediaSource2) &&
                     mediaSource1.HasAudio &&
                     mediaSource2.HasAudio &&
                     TrackItem.GetIntersectionRate(ref trackItem1, ref trackItem2, time, out _, out var rate))
@@ -187,12 +187,14 @@ namespace FFmpegVideoRenderer
             AVRational outputSampleRate = new AVRational(1, 44100);
             int outputAudioFrameSize = 1024;
 
-            Dictionary<string, MediaSource> mediaSources = new();
+            Dictionary<TrackItem, MediaSource> mediaSources = new();
+
+            var resourceMap = project.Resources.ToDictionary(v => v.Id);
 
             // prepare resources
-            foreach (var resource in project.Resources)
+            foreach (var trackItem in project.VideoTracks.SelectMany(v => v.Children).AsEnumerable<TrackItem>().Concat(project.AudioTracks.SelectMany(v => v.Children)))
             {
-                mediaSources[resource.Id] = MediaSource.Create(resource.SourceStream, true);
+                mediaSources[trackItem] = MediaSource.Create(resourceMap[trackItem.ResourceId].StreamFactory(), true);
             }
 
             // prepare rendering
@@ -372,7 +374,7 @@ namespace FFmpegVideoRenderer
                     if (trackItemsToRender.Count == 1)
                     {
                         var trackItem = trackItemsToRender[0];
-                        if (mediaSources.TryGetValue(trackItem.ResourceId, out var mediaSource))
+                        if (mediaSources.TryGetValue(trackItem, out var mediaSource))
                         {
                             var frameTime = GetMediaSourceRelatedTime(trackItem, time);
                             if (mediaSource.GetVideoFrameBitmap(frameTime) is SKBitmap frameBitmap)
@@ -387,8 +389,8 @@ namespace FFmpegVideoRenderer
                         var trackItem1 = trackItemsToRender[0];
                         var trackItem2 = trackItemsToRender[1];
 
-                        if (mediaSources.TryGetValue(trackItem1.ResourceId, out var mediaSource1) &&
-                            mediaSources.TryGetValue(trackItem2.ResourceId, out var mediaSource2) &&
+                        if (mediaSources.TryGetValue(trackItem1, out var mediaSource1) &&
+                            mediaSources.TryGetValue(trackItem2, out var mediaSource2) &&
                             mediaSource1.HasVideo &&
                             mediaSource2.HasVideo &&
                             TrackItem.GetIntersectionRate(ref trackItem1, ref trackItem2, time, out var transitionDuration, out var transitionRate))
