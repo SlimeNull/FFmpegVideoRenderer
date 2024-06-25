@@ -60,7 +60,11 @@ namespace FFmpegVideoRenderer
                 return new SKRect(0, 0, project.OutputWidth, project.OutputHeight);
             }
 
-            return new SKRect(videoTrackItem.PositionX, videoTrackItem.PositionY, videoTrackItem.SizeWidth, videoTrackItem.SizeHeight);
+            return new SKRect(
+                videoTrackItem.PositionX, 
+                videoTrackItem.PositionY, 
+                videoTrackItem.PositionX + videoTrackItem.SizeWidth, 
+                videoTrackItem.PositionY + videoTrackItem.SizeHeight);
         }
 
         static void CombineAudioSample(
@@ -472,6 +476,8 @@ namespace FFmpegVideoRenderer
 
 
             formatContext.WriteTrailer();
+
+            outputStream.Flush();
         }
     }
 }
