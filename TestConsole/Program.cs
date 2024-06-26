@@ -102,7 +102,7 @@ var project = new Project()
                 {
                     ResourceId = "bgm",
                     StartTime = TimeSpan.FromSeconds(70),
-                    EndTime = TimeSpan.FromSeconds(164)
+                    EndTime = TimeSpan.FromSeconds(264)
                 }
             }
         }

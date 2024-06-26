@@ -17,7 +17,7 @@ namespace FFmpegVideoRenderer
             [VideoTransition.SlideX] = new SlideXTransition(),
         };
 
-        static bool HasMoreAudioSamples(Project project, TimeSpan time)
+        static bool HasMoreFrames(Project project, TimeSpan time)
         {
             foreach (var track in project.AudioTracks)
             {
@@ -25,17 +25,6 @@ namespace FFmpegVideoRenderer
                     return true;
             }
 
-            foreach (var track in project.VideoTracks)
-            {
-                if (track.Children.Any(item => item.AbsoluteEndTime > time))
-                    return true;
-            }
-
-            return false;
-        }
-
-        static bool HasMoreVideoFrames(Project project, TimeSpan time)
-        {
             foreach (var track in project.VideoTracks)
             {
                 if (track.Children.Any(item => item.AbsoluteEndTime > time))
@@ -325,7 +314,7 @@ namespace FFmpegVideoRenderer
             {
                 var framePts = sampleIndex;
                 var frameTime = TimeSpan.FromSeconds((double)sampleIndex * outputSampleRate.Num / outputSampleRate.Den);
-                if (!HasMoreAudioSamples(project, frameTime))
+                if (!HasMoreFrames(project, frameTime))
                 {
                     break;
                 }
@@ -349,7 +338,7 @@ namespace FFmpegVideoRenderer
                             maxAudioTime = Max(maxAudioTime, time);
                             SetProgress();
 
-                            if (!HasMoreAudioSamples(project, time))
+                            if (!HasMoreFrames(project, time))
                             {
                                 break;
                             }
@@ -417,7 +406,7 @@ namespace FFmpegVideoRenderer
                 maxVideoTime = Max(maxVideoTime, time);
                 SetProgress();
 
-                if (!HasMoreVideoFrames(project, time))
+                if (!HasMoreFrames(project, time))
                 {
                     break;
                 }
