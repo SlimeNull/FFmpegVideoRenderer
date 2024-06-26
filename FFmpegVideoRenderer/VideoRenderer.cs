@@ -67,6 +67,44 @@ namespace FFmpegVideoRenderer
                 videoTrackItem.PositionY + videoTrackItem.SizeHeight);
         }
 
+        public static TimeSpan GetAudioTime(Project project)
+        {
+            TimeSpan time = TimeSpan.Zero;
+            foreach (var track in project.AudioTracks)
+            {
+                if (track.Children.Count > 0)
+                {
+                    var max = track.Children.Max(item => item.AbsoluteEndTime);
+                    if (max > time)
+                        time = max;
+                }
+            }
+
+            foreach (var track in project.VideoTracks)
+            {
+                if (track.Children.Count > 0)
+                {
+                    var max = track.Children.Max(item => item.AbsoluteEndTime);
+                    if (max > time)
+                        time = max;
+                }
+            }
+
+            return time;
+        }
+        public static TimeSpan GetVideoTime(Project project)
+        {
+            TimeSpan time = TimeSpan.Zero;
+            foreach (var track in project.VideoTracks)
+            {
+                var max = track.Children.Max(item => item.AbsoluteEndTime);
+                if (max > time)
+                    time = max;
+            }
+
+            return time;
+        }
+
         static void CombineAudioSample(
             Dictionary<TrackItem, MediaSource> mediaSources,
             List<TrackItem> bufferTrackItemsToRender,
@@ -187,9 +225,24 @@ namespace FFmpegVideoRenderer
 
         public static unsafe void Render(Project project, Stream outputStream, IProgress<RenderProgress>? progress)
         {
+            RenderProgress renderProgress = new RenderProgress();
+            TimeSpan videoTotalTime = GetVideoTime(project);
+            TimeSpan audioTotalTime = GetAudioTime(project);
+            TimeSpan totalTime = videoTotalTime + audioTotalTime;
+            TimeSpan maxAudioTime = TimeSpan.Zero;
+            TimeSpan maxVideoTime = TimeSpan.Zero;
+            static TimeSpan Max(TimeSpan left, TimeSpan right) => left > right ? left : right;
+            void SetProgress()
+            {
+                TimeSpan time = maxAudioTime + maxVideoTime;
+                renderProgress.Progress = Math.Round((time / totalTime) * 100, 2);
+                progress?.Report(renderProgress);
+            }
+
             AVRational outputFrameRate = new AVRational(1, 30);
             AVRational outputSampleRate = new AVRational(1, 44100);
             int outputAudioFrameSize = 1024;
+
 
             Dictionary<TrackItem, MediaSource> mediaSources = new();
 
@@ -266,7 +319,6 @@ namespace FFmpegVideoRenderer
             float[] leftSampleFrameBuffer = new float[outputAudioFrameSize];
             float[] rightSampleFrameBuffer = new float[outputAudioFrameSize];
 
-
             // audio encoding
             long sampleIndex = 0;
             while (true)
@@ -294,6 +346,9 @@ namespace FFmpegVideoRenderer
                         for (int i = 0; i < frame.NbSamples; i++)
                         {
                             var time = TimeSpan.FromSeconds((double)sampleIndex * outputSampleRate.Num / outputSampleRate.Den);
+                            maxAudioTime = Max(maxAudioTime, time);
+                            SetProgress();
+
                             if (!HasMoreAudioSamples(project, time))
                             {
                                 break;
@@ -359,6 +414,9 @@ namespace FFmpegVideoRenderer
             while (true)
             {
                 var time = TimeSpan.FromSeconds((double)frameIndex * outputFrameRate.Num / outputFrameRate.Den);
+                maxVideoTime = Max(maxVideoTime, time);
+                SetProgress();
+
                 if (!HasMoreVideoFrames(project, time))
                 {
                     break;
@@ -463,11 +521,11 @@ namespace FFmpegVideoRenderer
                 frameIndex++;
             }
 
+
             foreach (var packet in videoEncoder.EncodeFrame(null, packetRef))
             {
                 packet.RescaleTimestamp(videoEncoder.TimeBase, videoStream.TimeBase);
                 packet.StreamIndex = videoStream.Index;
-
 
                 formatContext.WritePacket(packet);
             }
@@ -477,6 +535,8 @@ namespace FFmpegVideoRenderer
 
             formatContext.WriteTrailer();
 
+            renderProgress.Progress = 100;
+            progress?.Report(renderProgress);
             outputStream.Flush();
         }
     }
