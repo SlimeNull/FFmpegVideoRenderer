@@ -67,7 +67,7 @@ var project = new Project()
                     Offset = TimeSpan.FromSeconds(0),
                     StartTime = TimeSpan.FromSeconds(0),
                     EndTime = TimeSpan.FromSeconds(6),
-                    MuteAudio = true,
+                    Volume = 0
                 },
                 new VideoTrackItem()
                 {
@@ -75,7 +75,7 @@ var project = new Project()
                     Offset = TimeSpan.FromSeconds(4),
                     StartTime = TimeSpan.FromSeconds(0),
                     EndTime = TimeSpan.FromSeconds(30),
-                    MuteAudio = true
+                    Volume = 0
                 }
             }
         },

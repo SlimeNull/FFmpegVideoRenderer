@@ -30,6 +30,11 @@
         /// </summary>
         public TimeSpan AbsoluteEndTime => Offset + Duration;
 
+        /// <summary>
+        /// Audio volume, 0~1
+        /// </summary>
+        public float Volume { get; set; } = 1;
+
         public bool IsTimeInRange(TimeSpan time)
         {
             return time >= Offset && time <= AbsoluteEndTime;

@@ -165,7 +165,7 @@ namespace FFmpegVideoRenderer
             sampleRight = 0;
 
             bufferTrackItemsToRender.Clear();
-            foreach (var trackItem in track.Children.Where(trackItem => !trackItem.MuteAudio && trackItem.IsTimeInRange(time)))
+            foreach (var trackItem in track.Children.Where(trackItem => trackItem.Volume != 0 && trackItem.IsTimeInRange(time)))
             {
                 bufferTrackItemsToRender.Add(trackItem);
             }
@@ -180,8 +180,8 @@ namespace FFmpegVideoRenderer
                     var relativeTime = GetMediaSourceRelatedTime(trackItem, time);
                     if (mediaSource.GetAudioSample(relativeTime) is AudioSample sample)
                     {
-                        sampleLeft += sample.LeftValue;
-                        sampleRight += sample.RightValue;
+                        sampleLeft += sample.LeftValue * trackItem.Volume;
+                        sampleRight += sample.RightValue * trackItem.Volume;
                     }
                 }
             }
@@ -202,11 +202,11 @@ namespace FFmpegVideoRenderer
                     if (mediaSource1.GetAudioSample(relativeTime1) is AudioSample sample1 &&
                         mediaSource2.GetAudioSample(relativeTime2) is AudioSample sample2)
                     {
-                        sampleLeft += (float)(sample1.LeftValue * (1 - rate));
-                        sampleRight += (float)(sample2.RightValue * (1 - rate));
+                        sampleLeft += (float)(sample1.LeftValue * trackItem1.Volume * (1 - rate));
+                        sampleRight += (float)(sample2.RightValue * trackItem1.Volume * (1 - rate));
 
-                        sampleLeft += (float)(sample2.LeftValue * rate);
-                        sampleRight += (float)(sample2.RightValue * rate);
+                        sampleLeft += (float)(sample2.LeftValue * trackItem2.Volume * rate);
+                        sampleRight += (float)(sample2.RightValue * trackItem2.Volume * rate);
                     }
                 }
             }
