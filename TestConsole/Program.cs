@@ -37,9 +37,6 @@ using Spectre.Console;
 
 #endregion
 
-int var = 123;
-var fff = new { };
-
 #region Test Rendering
 var video1 = @"E:\CloudMusic\MV\Erdenebat Baatar,Lkhamragchaa Lkhagvasuren,Altanjargal - Goyo (feat. Lkhamragchaa Lkhagvasuren, Altanjargal, Erdenechimeg G, Narandulam, Dashnyam & Uul Us).mp4";
 var video2 = @"E:\CloudMusic\MV\ナナツカゼ,PIKASONIC,なこたんまる - 春めく.mp4";
